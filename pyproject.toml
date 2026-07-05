@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "goalos"
+version = "0.1.0"
+description = "AI Operating System for Organigram"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.116.0",
+    "uvicorn[standard]>=0.35.0",
+    "sqlalchemy>=2.0.41",
+    "alembic>=1.16.0",
+    "psycopg[binary]>=3.2.9",
+    "redis>=6.2.0",
+    "pydantic>=2.11.0",
+    "python-dotenv>=1.1.0",
+    "httpx>=0.28.1",
+    "orjson>=3.11.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
