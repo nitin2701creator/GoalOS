@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.db.models.goal import Goal
 from app.schemas.goal import GoalCreateRequest
@@ -29,10 +29,12 @@ class GoalRepository:
         return goal
 
     def get(self, goal_id: uuid.UUID) -> Goal | None:
-        return self.db.get(Goal, goal_id)
+        statement = select(Goal).options(selectinload(Goal.objectives)).where(Goal.id == goal_id)
+        return self.db.scalars(statement).one_or_none()
 
     def list(self) -> Sequence[Goal]:
-        return self.db.scalars(select(Goal).order_by(Goal.created_at.desc())).all()
+        statement = select(Goal).options(selectinload(Goal.objectives)).order_by(Goal.created_at.desc())
+        return self.db.scalars(statement).all()
 
     def update(self, goal: Goal, updates: dict[str, Any]) -> Goal:
         for field, value in updates.items():

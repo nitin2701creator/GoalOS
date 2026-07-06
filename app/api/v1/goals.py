@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.repositories.goal_repository import GoalRepository
-from app.schemas.goal import GoalCreateRequest, GoalResponse, GoalUpdateRequest
+from app.schemas.goal import GoalCreateRequest, GoalResponse, GoalSummaryResponse, GoalUpdateRequest
+from app.schemas.objective import ObjectiveResponse
 from app.services.goal_service import GoalService
 
 router = APIRouter(prefix="/goals", tags=["Goals"])
@@ -72,3 +73,27 @@ async def delete_goal(
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Goal not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{goal_id}/objectives", response_model=list[ObjectiveResponse])
+async def list_goal_objectives(
+    goal_id: uuid.UUID,
+    service: GoalService = Depends(get_goal_service),
+) -> list[ObjectiveResponse]:
+    """List all objectives for a goal."""
+    objectives = service.objectives(goal_id)
+    if objectives is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Goal not found")
+    return objectives
+
+
+@router.get("/{goal_id}/summary", response_model=GoalSummaryResponse)
+async def goal_summary(
+    goal_id: uuid.UUID,
+    service: GoalService = Depends(get_goal_service),
+) -> GoalSummaryResponse:
+    """Return a goal summary with objective progress metrics."""
+    summary = service.summary(goal_id)
+    if summary is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Goal not found")
+    return summary

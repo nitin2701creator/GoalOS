@@ -1,5 +1,5 @@
 """
-Goal API schemas.
+Objective API schemas.
 """
 
 from __future__ import annotations
@@ -10,61 +10,52 @@ from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.db.models.goal import GoalStatus
-from app.schemas.objective import ObjectiveResponse
 
 
-class GoalCreateRequest(BaseModel):
-    """Request body for creating a goal."""
+class ObjectiveCreateRequest(BaseModel):
+    """Request body for creating an objective."""
 
-    company_id: uuid.UUID | None = None
+    goal_id: uuid.UUID
     title: str = Field(..., min_length=1, max_length=200)
     description: str = Field(..., min_length=1)
-    executive_owner: str = Field(..., min_length=1, max_length=120)
+    owner: str = Field(..., min_length=1, max_length=120)
     department: str = Field(..., min_length=1, max_length=120)
     priority: str = Field(..., min_length=1, max_length=50)
     status: GoalStatus = GoalStatus.DRAFT
     target_date: date | None = None
+    created_by: str = Field(default="system", min_length=1, max_length=120)
+    updated_by: str = Field(default="system", min_length=1, max_length=120)
 
 
-class GoalUpdateRequest(BaseModel):
-    """Request body for updating a goal."""
+class ObjectiveUpdateRequest(BaseModel):
+    """Request body for updating an objective."""
 
-    company_id: uuid.UUID | None = None
+    goal_id: uuid.UUID | None = None
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, min_length=1)
-    executive_owner: str | None = Field(default=None, min_length=1, max_length=120)
+    owner: str | None = Field(default=None, min_length=1, max_length=120)
     department: str | None = Field(default=None, min_length=1, max_length=120)
     priority: str | None = Field(default=None, min_length=1, max_length=50)
     status: GoalStatus | None = None
     target_date: date | None = None
+    updated_by: str | None = Field(default=None, min_length=1, max_length=120)
 
 
-class GoalResponse(BaseModel):
-    """Goal response returned by the API."""
+class ObjectiveResponse(BaseModel):
+    """Objective response returned by the API."""
 
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    company_id: uuid.UUID | None
+    goal_id: uuid.UUID
     title: str
     description: str
-    executive_owner: str
+    owner: str
     department: str
     priority: str
     status: GoalStatus
     target_date: date | None
-    objective_count: int
-    completed_objective_count: int
-    progress_percentage: int
+    created_by: str
+    updated_by: str
     created_at: datetime
     updated_at: datetime
-
-
-class GoalSummaryResponse(BaseModel):
-    """Goal summary response with objective breakdown."""
-
-    goal: GoalResponse
-    objectives: list[ObjectiveResponse]
-    objective_count: int
-    completed_objective_count: int
-    progress_percentage: int
