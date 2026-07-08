@@ -1,0 +1,10 @@
+goalos.db
+uvicorn.log
+uvicorn.err.log
+
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+*.pyc
