@@ -8,35 +8,25 @@ import uuid
 
 from app.db.models.project import Project
 from app.repositories.project_repository import ProjectRepository
-from app.schemas.project import ProjectCreateRequest, ProjectResponse, ProjectSummaryResponse, ProjectUpdateRequest
+from app.schemas.project import (
+    ProjectCreateRequest,
+    ProjectResponse,
+    ProjectSummaryResponse,
+    ProjectUpdateRequest,
+)
 
 
 class ProjectService:
-    """Business operations for projects."""
+    """Business operations for executable projects."""
 
     def __init__(self, repository: ProjectRepository):
         self.repository = repository
 
     def _metrics(self, project: Project) -> int:
-        execution_count = len(project.executions)
-        return execution_count
+        return len(project.executions)
 
     def _to_response(self, project: Project) -> ProjectResponse:
-        return ProjectResponse(
-            id=project.id,
-            company_id=project.company_id,
-            goal_id=project.goal_id,
-            name=project.name,
-            description=project.description,
-            executive_owner=project.executive_owner,
-            department=project.department,
-            priority=project.priority,
-            status=project.status,
-            start_date=project.start_date,
-            target_date=project.target_date,
-            created_at=project.created_at,
-            updated_at=project.updated_at,
-        )
+        return ProjectResponse.model_validate(project)
 
     def create(self, request: ProjectCreateRequest) -> ProjectResponse:
         return self._to_response(self.repository.create(request))
@@ -50,7 +40,11 @@ class ProjectService:
     def list(self) -> list[ProjectResponse]:
         return [self._to_response(project) for project in self.repository.list()]
 
-    def update(self, project_id: uuid.UUID, request: ProjectUpdateRequest) -> ProjectResponse | None:
+    def update(
+        self,
+        project_id: uuid.UUID,
+        request: ProjectUpdateRequest,
+    ) -> ProjectResponse | None:
         project = self.repository.get(project_id)
         if project is None:
             return None
@@ -74,8 +68,7 @@ class ProjectService:
         if project is None:
             return None
 
-        execution_count = self._metrics(project)
         return ProjectSummaryResponse(
             project=self._to_response(project),
-            execution_count=execution_count,
+            execution_count=self._metrics(project),
         )

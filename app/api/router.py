@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1 import goals as goals_router
+from app.api.v1 import projects as projects_router
 
 
 api_router = APIRouter()
@@ -21,3 +22,4 @@ async def ping():
 
 
 api_router.include_router(goals_router.router, prefix="/v1/goals", tags=["goals"])
+api_router.include_router(projects_router.router, prefix="/v1/projects", tags=["projects"])
