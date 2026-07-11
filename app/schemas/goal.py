@@ -20,14 +20,14 @@ class GoalCreateRequest(BaseModel):
 
 
 class GoalUpdateRequest(BaseModel):
-    company_id: Optional[UUID]
-    title: Optional[str]
-    description: Optional[str]
-    executive_owner: Optional[str]
-    department: Optional[str]
-    priority: Optional[str]
-    status: Optional[str]
-    target_date: Optional[date]
+    company_id: Optional[UUID] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    executive_owner: Optional[str] = None
+    department: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    target_date: Optional[date] = None
 
 
 class GoalResponse(BaseModel):

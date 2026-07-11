@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -35,6 +36,11 @@ class Objective(Base):
     )
 
     status: Mapped[GoalStatus] = mapped_column(
+        SQLEnum(
+            GoalStatus,
+            values_callable=lambda enum_class: [status.value for status in enum_class],
+            name="goal_status",
+        ),
         default=GoalStatus.DRAFT,
         nullable=False,
     )
