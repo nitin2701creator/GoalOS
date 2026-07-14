@@ -14,6 +14,10 @@ class TaskCreateRequest(BaseModel):
     assigned_agent: Optional[str] = None
     status: Optional[str] = None
     priority: str
+    workflow_id: Optional[UUID] = None
+    sequence_number: Optional[int] = None
+    depends_on_task_id: Optional[UUID] = None
+    execution_order: Optional[int] = None
     estimated_hours: Optional[float] = None
     actual_hours: Optional[float] = None
     due_date: Optional[date] = None
@@ -27,6 +31,10 @@ class TaskUpdateRequest(BaseModel):
     assigned_agent: Optional[str] = None
     status: Optional[str] = None
     priority: Optional[str] = None
+    workflow_id: Optional[UUID] = None
+    sequence_number: Optional[int] = None
+    depends_on_task_id: Optional[UUID] = None
+    execution_order: Optional[int] = None
     estimated_hours: Optional[float] = None
     actual_hours: Optional[float] = None
     due_date: Optional[date] = None
@@ -41,6 +49,10 @@ class TaskResponse(BaseModel):
     assigned_agent: Optional[str]
     status: str
     priority: str
+    workflow_id: Optional[UUID]
+    sequence_number: Optional[int]
+    depends_on_task_id: Optional[UUID]
+    execution_order: Optional[int]
     estimated_hours: Optional[float]
     actual_hours: Optional[float]
     due_date: Optional[date]

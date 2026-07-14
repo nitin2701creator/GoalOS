@@ -3,6 +3,7 @@ from .goal import Goal, GoalStatus
 from .objective import Objective
 from .project import Project, ProjectStatus
 from .task import Task
+from .workflow import Workflow, WorkflowStatus
 
 __all__ = [
     "Execution",
@@ -13,4 +14,6 @@ __all__ = [
     "Project",
     "ProjectStatus",
     "Task",
+    "Workflow",
+    "WorkflowStatus",
 ]
