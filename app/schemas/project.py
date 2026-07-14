@@ -48,3 +48,8 @@ class ProjectResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ProjectSummaryResponse(BaseModel):
+    project: ProjectResponse
+    execution_count: int
