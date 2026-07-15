@@ -15,10 +15,21 @@ class PlanningService:
         self.planner = Planner()
 
     def generate(self, request: PlanningRequest) -> PlanningResponse:
-        vision = request.vision
-        mission = request.mission
-        goals = request.business_goals
-        constraints = request.constraints or []
+        return self.preview(
+            vision=request.vision,
+            mission=request.mission,
+            goals=request.business_goals,
+            constraints=request.constraints,
+        )
+
+    def preview(
+        self,
+        vision: str,
+        mission: str,
+        goals: list[str],
+        constraints: list[str] | None = None,
+    ) -> PlanningResponse:
+        constraints = constraints or []
 
         objectives = self.planner.generate_objectives(vision, mission, goals)
         kpis = self.planner.generate_kpis(vision, mission, goals)
@@ -39,4 +50,36 @@ class PlanningService:
             executions=executions,
             agent_requirements=agent_requirements,
             constraints=constraints,
+        )
+
+    def get_by_goal(
+        self,
+        goal_id: str,
+        vision: str,
+        mission: str,
+        goals: list[str],
+        constraints: list[str] | None = None,
+    ) -> PlanningResponse:
+        planning = self.preview(vision=vision, mission=mission, goals=goals, constraints=constraints)
+        filtered_objectives = [obj for obj in planning.objectives if str(obj.id) == goal_id]
+        if not filtered_objectives:
+            raise ValueError("Goal planning preview not found for the requested goal_id")
+
+        filtered_projects = [project for project in planning.projects if str(project.goal_id) == goal_id]
+        filtered_tasks = [task for task in planning.tasks if task.project_id in {project.id for project in filtered_projects}]
+        filtered_workflows = [workflow for workflow in planning.workflows if workflow.project_id in {project.id for project in filtered_projects}]
+        project_ids = {project.id for project in filtered_projects}
+        filtered_dependencies = [dependency for dependency in planning.dependencies if dependency["task_id"] in {task.id for task in filtered_tasks}]
+        filtered_executions = [execution for execution in planning.executions if execution.task_id in {task.id for task in filtered_tasks}]
+
+        return PlanningResponse(
+            objectives=filtered_objectives,
+            kpis=planning.kpis,
+            projects=filtered_projects,
+            tasks=filtered_tasks,
+            workflows=filtered_workflows,
+            dependencies=filtered_dependencies,
+            executions=filtered_executions,
+            agent_requirements=planning.agent_requirements,
+            constraints=planning.constraints,
         )
