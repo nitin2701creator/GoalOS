@@ -6,6 +6,7 @@ from app.api.v1 import projects as projects_router
 from app.api.v1 import tasks as tasks_router
 from app.api.v1 import executions as executions_router
 from app.api.v1 import workflows as workflows_router
+from app.api.v1 import planning as planning_router
 
 
 api_router = APIRouter()
@@ -31,3 +32,4 @@ api_router.include_router(projects_router.router, prefix="/v1/projects", tags=["
 api_router.include_router(tasks_router.router, prefix="/v1/tasks", tags=["tasks"])
 api_router.include_router(executions_router.router, prefix="/v1", tags=["executions"])
 api_router.include_router(workflows_router.router, prefix="/v1/workflows", tags=["workflows"])
+api_router.include_router(planning_router.router, prefix="/v1/planning", tags=["planning"])
