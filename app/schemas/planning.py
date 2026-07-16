@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import List, Optional
 from pydantic import BaseModel
 
-from app.schemas.goal import GoalResponse
 from app.schemas.objective import ObjectiveResponse
 from app.schemas.project import ProjectResponse
 from app.schemas.task import TaskResponse
