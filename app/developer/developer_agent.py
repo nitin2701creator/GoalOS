@@ -7,6 +7,9 @@ from typing import Any
 
 from app.developer.architecture import ArchitectureAnalyzer, ArchitectureSummary
 from app.developer.context import DeveloperContext
+from app.developer.feature_request import FeatureRequest
+from app.developer.implementation_plan import ImplementationPlan
+from app.developer.implementation_planner import ImplementationPlanner
 from app.developer.repository_reader import RepositoryReader
 
 
@@ -23,6 +26,7 @@ class DeveloperAgent:
         self.context = DeveloperContext(repository_root)
         self.repository_reader = RepositoryReader(self.context.repository_root)
         self.architecture_analyzer = ArchitectureAnalyzer()
+        self.implementation_planner = ImplementationPlanner()
 
     def load_repository(self) -> dict[str, Any]:
         """Discover source and documentation files and store project metadata."""
@@ -57,3 +61,13 @@ class DeveloperAgent:
         if architecture is None:
             raise RuntimeError("Repository analysis has not been run")
         return architecture
+
+    def plan_feature(self, request: FeatureRequest) -> ImplementationPlan:
+        """Create a code-free implementation plan for a requested feature."""
+
+        architecture = self.context.architecture() or self.analyse_repository()
+        return self.implementation_planner.plan(
+            request,
+            self.repository_reader,
+            architecture,
+        )
