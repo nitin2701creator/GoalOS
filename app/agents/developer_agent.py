@@ -2,19 +2,50 @@
 
 from __future__ import annotations
 
+import importlib
+import logging
+from typing import Any, Mapping
+
+from app.ai.llm_gateway import LLMGateway
 from app.agents.base_agent import AgentContext, AgentResult, BaseAgent
+from app.tools import FileSystemTool, LLMTool
+
+logger = logging.getLogger(__name__)
 
 
 class DeveloperAgent(BaseAgent):
-    """Agent responsible for planning implementation work."""
+    """Lightweight runtime orchestrator for developer-facing resources."""
 
-    def __init__(self) -> None:
+    agent_name = "developer"
+
+    def __init__(self, llm_gateway: LLMGateway | None = None) -> None:
         """Initialize the developer agent."""
 
         super().__init__(
             name="Developer Agent",
             description="Plans, implements, and reports software engineering work.",
         )
+        self._configured_llm_gateway = llm_gateway
+
+    def initialize(self) -> None:
+        """Load developer resources and the shared LLM gateway."""
+
+        if self.is_initialized:
+            return
+        self._llm_gateway = self._configured_llm_gateway or LLMGateway()
+        super().initialize()
+        logger.info("Developer agent runtime resources loaded")
+
+    def load_skills(self) -> Mapping[str, Any]:
+        """Load the existing developer skill namespace for this runtime."""
+
+        return {"developer": importlib.import_module("app.skills.developer")}
+
+    def load_tools(self) -> Mapping[str, LLMTool | FileSystemTool]:
+        """Load developer-safe tools from the shared tools framework."""
+
+        tools = (LLMTool(), FileSystemTool())
+        return {tool.name: tool for tool in tools}
 
     async def plan(self, context: AgentContext) -> AgentResult:
         """Create a deterministic implementation plan from context.
@@ -57,11 +88,18 @@ class DeveloperAgent(BaseAgent):
             A developer-focused execution result.
         """
 
+        if not self.is_initialized:
+            self.initialize()
         goal = self._require_text(context.goal, "goal")
         return self._result(
-            summary=f"Prepared execution stub for: {goal}",
-            actions=("Await approved implementation scope before modifying code.",),
-            metadata={"phase": "execute"},
+            summary=f"Prepared developer runtime execution stub for: {goal}",
+            actions=("Coordinate loaded skills, tools, and LLM services for the request.",),
+            metadata={
+                "phase": "execute",
+                "skill_count": len(self.skills),
+                "tool_count": len(self.tools),
+                "llm_gateway_loaded": self.llm_gateway is not None,
+            },
         )
 
     async def report(self, context: AgentContext) -> AgentResult:

@@ -5,7 +5,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
+
+from app.ai.llm_gateway import LLMGateway
+from app.tools.base_tool import BaseTool
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,10 +54,16 @@ class AgentResult:
 
 
 class BaseAgent(ABC):
-    """Abstract base class for deterministic GoalOS agents."""
+    """Abstract orchestration shell shared by GoalOS runtime agents.
+
+    Concrete agents supply their domain resources and execution behaviour. This
+    class deliberately owns no business decisions; it only manages the agent
+    lifecycle and exposes immutable resource snapshots.
+    """
 
     name: str
     description: str
+    agent_name: str
 
     def __init__(self, name: str, description: str) -> None:
         """Initialize the base agent.
@@ -69,6 +78,70 @@ class BaseAgent(ABC):
 
         self.name = self._require_text(name, "name")
         self.description = self._require_text(description, "description")
+        self._skills: Mapping[str, Any] = MappingProxyType({})
+        self._tools: Mapping[str, BaseTool] = MappingProxyType({})
+        self._llm_gateway: LLMGateway | None = None
+        self._initialized = False
+
+    @property
+    def skills(self) -> Mapping[str, Any]:
+        """Return the immutable skills currently loaded for this agent."""
+
+        return self._skills
+
+    @property
+    def tools(self) -> Mapping[str, BaseTool]:
+        """Return the immutable tools currently loaded for this agent."""
+
+        return self._tools
+
+    @property
+    def llm_gateway(self) -> LLMGateway | None:
+        """Return the shared LLM gateway assigned during initialization."""
+
+        return self._llm_gateway
+
+    @property
+    def is_initialized(self) -> bool:
+        """Indicate whether this agent's runtime resources are available."""
+
+        return self._initialized
+
+    def initialize(self) -> None:
+        """Load agent resources once and make the agent ready for execution."""
+
+        if self._initialized:
+            return
+
+        self._skills = self._freeze_resources(self.load_skills())
+        self._tools = self._freeze_resources(self.load_tools())
+        self._initialized = True
+
+    def shutdown(self) -> None:
+        """Release runtime resource references held by this agent."""
+
+        self._skills = MappingProxyType({})
+        self._tools = MappingProxyType({})
+        self._llm_gateway = None
+        self._initialized = False
+
+    def load_skills(self) -> Mapping[str, Any] | Iterable[tuple[str, Any]]:
+        """Load skills available to this agent.
+
+        Subclasses override this hook when they have skill resources. The
+        default keeps agents with no skills valid without adding business logic
+        to the runtime base class.
+        """
+
+        return {}
+
+    def load_tools(self) -> Mapping[str, BaseTool] | Iterable[tuple[str, BaseTool]]:
+        """Load tools available to this agent.
+
+        Subclasses override this hook when they have tool resources.
+        """
+
+        return {}
 
     @abstractmethod
     async def plan(self, context: AgentContext) -> AgentResult:
@@ -145,3 +218,11 @@ class BaseAgent(ABC):
         if not normalized_value:
             raise ValueError(f"{field_name} is required")
         return normalized_value
+
+    @staticmethod
+    def _freeze_resources(
+        resources: Mapping[str, Any] | Iterable[tuple[str, Any]],
+    ) -> Mapping[str, Any]:
+        """Normalize named resources into an immutable mapping."""
+
+        return MappingProxyType(dict(resources))

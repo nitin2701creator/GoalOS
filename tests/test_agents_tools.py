@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.agents import AgentContext, BaseAgent, DeveloperAgent
+from app.agents import AgentContext, AgentLoader, AgentRegistry, BaseAgent, DeveloperAgent
 from app.tools import BaseTool, FileSystemTool, LLMTool, ToolContext, ToolRegistry
 
 
@@ -24,6 +24,35 @@ async def test_developer_agent_implements_async_lifecycle() -> None:
     assert plan.metadata["phase"] == "plan"
     assert execution.metadata["phase"] == "execute"
     assert report.metadata["phase"] == "report"
+
+
+@pytest.mark.asyncio
+async def test_developer_agent_loads_runtime_resources_before_execution() -> None:
+    agent = DeveloperAgent()
+
+    assert agent.is_initialized is False
+
+    result = await agent.execute(AgentContext(goal="Prepare a runtime"))
+
+    assert agent.is_initialized is True
+    assert set(agent.skills) == {"developer"}
+    assert set(agent.tools) == {"filesystem", "llm"}
+    assert agent.llm_gateway is not None
+    assert result.metadata["tool_count"] == 2
+
+
+def test_agent_registry_and_loader_discover_initialized_agents() -> None:
+    registry = AgentRegistry()
+    loader = AgentLoader(registry)
+
+    assert loader.discover_agents() == ("developer",)
+    loaded_agents = loader.load_agents()
+
+    assert registry.get_agent("developer") is DeveloperAgent
+    assert registry.list_agents() == ("developer",)
+    assert loaded_agents["developer"].is_initialized is True
+    assert loader.get_agent("developer") is loaded_agents["developer"]
+    assert registry.unregister("developer") is DeveloperAgent
 
 
 def test_base_tool_is_abstract() -> None:
