@@ -3,7 +3,26 @@ from __future__ import annotations
 import pytest
 
 from app.agents import AgentContext, AgentLoader, AgentRegistry, BaseAgent, DeveloperAgent
+from app.skills import BaseSkill, SkillLoader, SkillRegistry
 from app.tools import BaseTool, FileSystemTool, LLMTool, ToolContext, ToolRegistry
+
+
+class ExampleSkill(BaseSkill):
+    """Concrete test skill used to validate the skills runtime."""
+
+    def __init__(self) -> None:
+        super().__init__(name="example", description="Example test skill")
+        self.initialized = False
+        self.stopped = False
+
+    def initialize(self) -> None:
+        self.initialized = True
+
+    def shutdown(self) -> None:
+        self.stopped = True
+
+    async def execute(self, context: object) -> object:
+        return context
 
 
 def test_base_agent_is_abstract() -> None:
@@ -35,10 +54,45 @@ async def test_developer_agent_loads_runtime_resources_before_execution() -> Non
     result = await agent.execute(AgentContext(goal="Prepare a runtime"))
 
     assert agent.is_initialized is True
-    assert set(agent.skills) == {"developer"}
+    assert set(agent.skills) == set()
     assert set(agent.tools) == {"filesystem", "llm"}
     assert agent.llm_gateway is not None
     assert result.metadata["tool_count"] == 2
+
+
+def test_skill_registry_and_loader_manage_skill_lifecycle() -> None:
+    registry = SkillRegistry()
+    loader = SkillLoader(registry)
+    skill = ExampleSkill()
+
+    registry.register(skill)
+    loaded_skills = loader.load_skills()
+
+    assert registry.list_skills() == ("example",)
+    assert registry.get_skill(" example ") is skill
+    assert loaded_skills["example"].initialized is True
+
+    loader.shutdown_skills()
+
+    assert skill.stopped is True
+    assert registry.unregister("example") is skill
+
+
+def test_skill_loader_discovers_concrete_skill_classes() -> None:
+    import types
+
+    module = types.ModuleType("test_skills")
+
+    class DiscoveredSkill(ExampleSkill):
+        pass
+
+    DiscoveredSkill.__module__ = module.__name__
+    module.DiscoveredSkill = DiscoveredSkill
+
+    loader = SkillLoader()
+
+    assert loader.discover_skills(module) == ("DiscoveredSkill",)
+    assert set(loader.load_skills()) == {"example"}
 
 
 def test_agent_registry_and_loader_discover_initialized_agents() -> None:

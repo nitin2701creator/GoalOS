@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import importlib
 import logging
-from typing import Any, Mapping
+from typing import Mapping
 
 from app.ai.llm_gateway import LLMGateway
 from app.agents.base_agent import AgentContext, AgentResult, BaseAgent
+from app.skills import BaseSkill, SkillLoader
 from app.tools import FileSystemTool, LLMTool
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ class DeveloperAgent(BaseAgent):
             description="Plans, implements, and reports software engineering work.",
         )
         self._configured_llm_gateway = llm_gateway
+        self._skill_loader = SkillLoader()
 
     def initialize(self) -> None:
         """Load developer resources and the shared LLM gateway."""
@@ -36,10 +37,18 @@ class DeveloperAgent(BaseAgent):
         super().initialize()
         logger.info("Developer agent runtime resources loaded")
 
-    def load_skills(self) -> Mapping[str, Any]:
-        """Load the existing developer skill namespace for this runtime."""
+    def load_skills(self) -> Mapping[str, BaseSkill]:
+        """Discover and initialize skills through the shared skills runtime."""
 
-        return {"developer": importlib.import_module("app.skills.developer")}
+        self._skill_loader.discover_skills()
+        return self._skill_loader.load_skills()
+
+    def shutdown(self) -> None:
+        """Release initialized skills before clearing agent resources."""
+
+        if self.is_initialized:
+            self._skill_loader.shutdown_skills()
+        super().shutdown()
 
     def load_tools(self) -> Mapping[str, LLMTool | FileSystemTool]:
         """Load developer-safe tools from the shared tools framework."""
