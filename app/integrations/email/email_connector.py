@@ -25,8 +25,11 @@ class EmailConnector(BaseConnector):
         self,
         config: EmailConfig | None = None,
         authenticator: EmailAuthenticator | None = None,
+        *,
+        connector_name: str = "email",
+        description: str = "Provider-neutral email connector",
     ) -> None:
-        super().__init__(name="email", description="Provider-neutral email connector")
+        super().__init__(name=connector_name, description=description)
         self.config = config or EmailConfig()
         self.authenticator = authenticator
 
