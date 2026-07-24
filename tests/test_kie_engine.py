@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from pypdf import PdfWriter
 
 from app.kie.classifiers.document_classifier import DocumentClassifier
 from app.kie.engine import KnowledgeEngine
@@ -94,7 +95,12 @@ def test_invoice_extractor_returns_structured_invoice() -> None:
 
 def test_engine_generates_document_result(tmp_path: Path) -> None:
     document = tmp_path / "statement.pdf"
-    document.write_text("not a real PDF")
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+
+    with document.open("wb") as pdf_file:
+        writer.write(pdf_file)
 
     result = KnowledgeEngine().process(document)
 
@@ -103,7 +109,7 @@ def test_engine_generates_document_result(tmp_path: Path) -> None:
     assert result.metadata.filename == "statement.pdf"
     assert result.metadata.extension == ".pdf"
     assert result.parser == "pdf_parser"
-    assert "Placeholder PDF text" in result.raw_text
+    assert isinstance(result.raw_text, str)
     assert result.structured_data == {}
 
 
