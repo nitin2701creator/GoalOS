@@ -9,9 +9,37 @@ from app.kie.classifiers.document_classifier import DocumentClassifier
 from app.kie.engine import KnowledgeEngine
 from app.kie.extractors.invoice_extractor import InvoiceExtractor
 from app.kie.models import DocumentResult, DocumentType
+from app.kie.parsers.base_parser import BaseParser
 from app.kie.parsers.pdf_parser import PDFParser
 from app.kie.registry import ExtractorRegistry, ParserRegistry
 from app.kie.service import KnowledgeService
+
+
+class FakeInvoiceParser(BaseParser):
+    """Return predictable invoice text for KIE integration tests."""
+
+    name = "fake_invoice_parser"
+    supported_extensions = (".txt",)
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def supports(self, file_path: str | Path) -> bool:
+        return Path(file_path).suffix.lower() in self.supported_extensions
+
+    def parse(self, file_path: str | Path) -> str:
+        return self.text
+
+
+def make_invoice_engine(raw_text: str) -> KnowledgeEngine:
+    """Create a KnowledgeEngine with predictable invoice input."""
+
+    parser_registry = ParserRegistry()
+    parser_registry.register(FakeInvoiceParser(raw_text))
+
+    return KnowledgeEngine(
+        parser_registry=parser_registry,
+    )
 
 
 def test_engine_registers_default_parsers_and_extractors() -> None:
@@ -121,3 +149,87 @@ def test_service_delegates_to_engine(tmp_path: Path) -> None:
 
     assert result.document_type is DocumentType.EMAIL
     assert result.parser == "email_parser"
+
+
+def test_engine_validates_valid_invoice(tmp_path: Path) -> None:
+    raw_text = """
+    ACME SUPPLIES PRIVATE LIMITED
+    Tax Invoice
+    Invoice Number: INV-2001
+    Invoice Date: 25/07/2026
+    Currency: INR
+    Subtotal: 1000.00
+    GST: 180.00
+    Grand Total: 1180.00
+    """
+
+    document = tmp_path / "invoice.txt"
+    document.write_text(raw_text)
+
+    result = make_invoice_engine(raw_text).process(document)
+
+    assert result.document_type is DocumentType.INVOICE
+    assert result.extractor == "invoice_extractor"
+
+    validation = result.structured_data["validation"]
+
+    assert validation["status"] == "valid"
+    assert validation["is_valid"] is True
+    assert validation["issues"] == []
+    assert validation["warnings"] == []
+
+
+def test_engine_flags_invoice_with_incorrect_total(
+    tmp_path: Path,
+) -> None:
+    raw_text = """
+    ACME SUPPLIES PRIVATE LIMITED
+    Tax Invoice
+    Invoice Number: INV-2002
+    Invoice Date: 25/07/2026
+    Currency: INR
+    Subtotal: 1000.00
+    GST: 180.00
+    Grand Total: 1500.00
+    """
+
+    document = tmp_path / "invoice.txt"
+    document.write_text(raw_text)
+
+    result = make_invoice_engine(raw_text).process(document)
+
+    validation = result.structured_data["validation"]
+
+    assert validation["status"] == "invalid"
+    assert validation["is_valid"] is False
+    assert (
+        "Invoice total does not match subtotal plus tax."
+        in validation["issues"]
+    )
+
+
+def test_engine_flags_invoice_missing_required_data(
+    tmp_path: Path,
+) -> None:
+    raw_text = """
+    Tax Invoice
+    Invoice Number: INV-2003
+    Currency: INR
+    Subtotal: 1000.00
+    GST: 180.00
+    Grand Total: 1180.00
+    """
+
+    document = tmp_path / "invoice.txt"
+    document.write_text(raw_text)
+
+    result = make_invoice_engine(raw_text).process(document)
+
+    validation = result.structured_data["validation"]
+
+    assert validation["status"] == "invalid"
+    assert validation["is_valid"] is False
+    assert any(
+        "invoice_date" in issue
+        for issue in validation["issues"]
+    )
