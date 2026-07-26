@@ -17,10 +17,11 @@ from app.kie.models import DocumentMetadata, DocumentResult, DocumentType
 from app.kie.ocr.router import OCRRouter
 from app.kie.parsers import EmailParser, ExcelParser, ImageParser, PDFParser
 from app.kie.registry import ExtractorRegistry, ParserRegistry
+from app.kie.validators.invoice_validator import InvoiceValidator
 
 
 class KnowledgeEngine:
-    """Coordinate parsing, OCR, classification, and extraction."""
+    """Coordinate parsing, OCR, classification, extraction, and validation."""
 
     def __init__(
         self,
@@ -29,12 +30,14 @@ class KnowledgeEngine:
         classifier: DocumentClassifier | None = None,
         content_classifier: ContentClassifier | None = None,
         ocr_router: OCRRouter | None = None,
+        invoice_validator: InvoiceValidator | None = None,
     ) -> None:
         self.parser_registry = parser_registry or self._default_parser_registry()
         self.extractor_registry = extractor_registry or self._default_extractor_registry()
         self.classifier = classifier or DocumentClassifier()
         self.content_classifier = content_classifier or ContentClassifier()
         self.ocr_router = ocr_router or OCRRouter()
+        self.invoice_validator = invoice_validator or InvoiceValidator()
 
     def process(self, file_path: str | Path) -> DocumentResult:
         """Process one local file through the complete KIE pipeline."""
@@ -63,6 +66,22 @@ class KnowledgeEngine:
         # Stage 4: use the business-specific extractor when recognized.
         extractor = self.extractor_registry.get_extractor(business_type)
         structured_data = extractor.extract(raw_text) if extractor else {}
+
+        # Stage 5: validate extracted invoice intelligence.
+        if (
+            business_type is DocumentType.INVOICE
+            and structured_data
+        ):
+            validation = self.invoice_validator.validate(
+                structured_data
+            )
+
+            structured_data["validation"] = {
+                "status": validation.status.value,
+                "is_valid": validation.is_valid,
+                "issues": validation.issues,
+                "warnings": validation.warnings,
+            }
 
         # Preserve existing behaviour when business content is unknown.
         result_type = (
