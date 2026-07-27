@@ -157,7 +157,9 @@ class PurchaseOrderExtractor:
         )
 
         if supplier is not None:
-            return supplier
+            # Remove trailing punctuation (e.g., period) and extra whitespace.
+            supplier = supplier.strip().rstrip(".")
+            return supplier if supplier else None
 
         lines = [line.strip() for line in text.splitlines() if line.strip()]
 
@@ -166,8 +168,8 @@ class PurchaseOrderExtractor:
                 continue
 
             if len(line) <= 120:
-                return line
-
+                # Clean up possible trailing punctuation.
+                return line.rstrip(".")
         return None
 
     @staticmethod
