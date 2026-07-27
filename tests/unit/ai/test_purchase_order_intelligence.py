@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import requests
 from unittest.mock import Mock, patch
 
 import pytest
