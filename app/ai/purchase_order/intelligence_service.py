@@ -21,7 +21,7 @@ from typing import Any, Mapping
 
 import requests
 
-from ..config import LLMConfig
+from app.ai.config import LLMConfig
 
 
 @dataclass(frozen=True, slots=True)
