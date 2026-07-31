@@ -1,16 +1,9 @@
 """Purchase Order Intelligence Service.
 
 Provides a thin wrapper around the configured LLM endpoint to assess the
-risk level of a purchase order.  The service is deliberately lightweight
-so that it can be used both from API handlers and from command‑line tools
+risk level of a purchase order. The service is deliberately lightweight
+so that it can be used both from API handlers and from command-line tools
 without pulling in heavy dependencies.
-
-Typical usage:
-
-    from app.ai.purchase_order.intelligence_service import PurchaseOrderIntelligenceService
-    service = PurchaseOrderIntelligenceService()
-    risk = service.assess_risk({"order_id": "PO‑123", "amount": 15000, "vendor": "Acme Ltd."})
-    print(risk)   # -> "Low" | "Medium" | "High"
 """
 
 from __future__ import annotations
@@ -22,6 +15,7 @@ from typing import Any, Mapping
 import requests
 
 from app.ai.config import LLMConfig
+from app.ai.exceptions import LLMConnectionError, LLMResponseError
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,8 +27,7 @@ class PurchaseOrderRiskResult:
     risk_level:
         One of ``"Low"``, ``"Medium"``, or ``"High"``.
     raw_response:
-        The full JSON payload returned by the LLM endpoint – useful for
-        debugging or logging.
+        The full JSON payload returned by the LLM endpoint.
     """
 
     risk_level: str
@@ -42,26 +35,16 @@ class PurchaseOrderRiskResult:
 
 
 class PurchaseOrderIntelligenceService:
-    """Service that asks the LLM to evaluate purchase‑order risk."""
+    """Service that asks the LLM to evaluate purchase-order risk."""
 
     _VALID_RISK_LEVELS = {"Low", "Medium", "High"}
 
     def __init__(self, config: LLMConfig | None = None) -> None:
-        """Create a new service instance.
-
-        Parameters
-        ----------
-        config:
-            Optional explicit configuration.  If omitted the configuration
-            is built from the environment via :meth:`LLMConfig.from_env`.
-        """
+        """Create a new service instance."""
         self._config = config or LLMConfig.from_env()
 
     def assess_risk(self, purchase_order: Mapping[str, Any]) -> PurchaseOrderRiskResult:
         """Ask the LLM to assess the risk of *purchase_order*.
-
-        The method builds a short prompt containing the order details,
-        sends it to the LLM endpoint and parses the response.
 
         Returns
         -------
@@ -70,62 +53,58 @@ class PurchaseOrderIntelligenceService:
 
         Raises
         ------
-        ValueError
-            If the LLM returns a value that is not one of the expected
-            risk levels.
-        requests.HTTPError
-            Propagated if the HTTP request fails.
+        LLMConnectionError
+            If the HTTP request fails.
+        LLMResponseError
+            If the response is malformed or contains an invalid risk level.
         """
         prompt = self._build_prompt(purchase_order)
 
-        # Prepare request payload – the exact schema depends on the LLM provider.
         payload = {
             "model": self._config.default_model,
             "prompt": prompt,
-            "max_tokens": 10,
+            "max_tokens": 50,
+            "temperature": 0,
         }
 
-        headers = {}
-        if self._config.api_key:
-            headers["Authorization"] = f"Bearer {self._config.api_key}"
-        headers["Content-Type"] = "application/json"
+        headers = {
+            "Authorization": f"Bearer {self._config.api_key}" if self._config.api_key else "",
+            "Content-Type": "application/json",
+        }
 
-        response = requests.post(
-            f"{self._config.base_url.rstrip('/')}/v1/completions",
-            data=json.dumps(payload),
-            headers=headers,
-            timeout=self._config.timeout,
-        )
-        response.raise_for_status()
-        raw = response.json()
-
-        # The provider is expected to return a structure similar to:
-        # {"choices": [{"text": "Medium"}]}
         try:
-            risk_text = raw["choices"][0]["text"].strip()
-        except (KeyError, IndexError, AttributeError) as exc:
-            raise ValueError("Malformed LLM response – missing risk text") from exc
+            response = requests.post(
+                f"{self._config.base_url.rstrip('/')}/v1/completions",
+                json=payload,
+                headers=headers,
+                timeout=self._config.timeout,
+            )
+            response.raise_for_status()
+            raw = response.json()
+        except requests.RequestException as exc:
+            raise LLMConnectionError(f"Failed to connect to LLM: {exc}") from exc
 
-        if risk_text not in self._VALID_RISK_LEVELS:
-            raise ValueError(f"Unexpected risk level returned by LLM: {risk_text!r}")
+        try:
+            # Extract JSON from the text response
+            content = raw["choices"][0]["text"].strip()
+            data = json.loads(content)
+            risk_level = data["risk_level"]
+        except (KeyError, IndexError, json.JSONDecodeError, TypeError) as exc:
+            raise LLMResponseError(f"Malformed LLM response: {raw}") from exc
 
-        return PurchaseOrderRiskResult(risk_level=risk_text, raw_response=raw)
+        if risk_level not in self._VALID_RISK_LEVELS:
+            raise LLMResponseError(f"Unexpected risk level: {risk_level!r}")
+
+        return PurchaseOrderRiskResult(risk_level=risk_level, raw_response=raw)
 
     @staticmethod
     def _build_prompt(purchase_order: Mapping[str, Any]) -> str:
-        """Create a concise prompt for the LLM.
-
-        The prompt is deliberately short – it lists the most relevant fields
-        and asks the model to output only the risk level.
-
-        Example output from the LLM should be exactly one of:
-        ``Low``, ``Medium`` or ``High``.
-        """
-        # Convert the mapping to a JSON‑like string for readability.
+        """Create a prompt requesting JSON output."""
         po_repr = json.dumps(purchase_order, ensure_ascii=False)
         return (
             "You are an expert financial analyst. "
-            "Given the following purchase order data, assess the risk level "
-            "and respond with only one word: Low, Medium, or High.\n"
+            "Assess the risk of the following purchase order. "
+            "Return ONLY a JSON object with the key 'risk_level' "
+            "and a value of 'Low', 'Medium', or 'High'.\n"
             f"{po_repr}"
         )
