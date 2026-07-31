@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -23,6 +24,15 @@ class Complexity(StrEnum):
     HIGH = "high"
 
 
+class StepStatus(StrEnum):
+    """Current execution state of an implementation step."""
+
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class ImplementationStep(BaseModel):
     """One ordered, code-free implementation activity."""
 
@@ -36,6 +46,8 @@ class ImplementationStep(BaseModel):
     priority: Priority
     dependencies: tuple[str, ...] = ()
     estimated_complexity: Complexity
+    status: StepStatus = StepStatus.PENDING
+    result: Optional[str] = None
 
 
 class ImplementationPlan(BaseModel):
@@ -52,4 +64,3 @@ class ImplementationPlan(BaseModel):
     files_to_modify: tuple[str, ...] = ()
     dependencies: tuple[str, ...] = ()
     estimated_complexity: Complexity
-
