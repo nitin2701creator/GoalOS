@@ -6,13 +6,17 @@ from typing import Any
 
 
 class DevelopmentMemory:
-    """Placeholder interface for ADS session and learning context."""
+    """In-memory ADS session and learning context."""
+
+    def __init__(self) -> None:
+        self._entries: dict[str, Any] = {}
 
     def recall(self, key: str) -> Any | None:
-        """Recall a value when storage behavior is defined."""
+        """Recall a stored value, if present."""
 
-        # TODO: Define scoped, auditable memory retrieval.
-        raise NotImplementedError
+        return self._entries.get(key)
 
+    def remember(self, key: str, value: Any) -> None:
+        """Store ``value`` under a task-scoped key."""
 
-# TODO: Add memory entry models and retention policy contracts.
+        self._entries[key] = value

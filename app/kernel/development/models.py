@@ -27,6 +27,15 @@ class WorkerType(StrEnum):
     OPENHANDS = "openhands"
 
 
+class RunStatus(StrEnum):
+    """Terminal outcomes for one ADS orchestration run."""
+
+    EMPTY = "empty"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    REJECTED = "rejected"
+
+
 @dataclass(slots=True)
 class DevelopmentTask:
     """A unit of development work managed by ADS."""
@@ -40,3 +49,16 @@ class DevelopmentTask:
     test_command: str = "python -m pytest"
     commit_message: str = ""
     dependencies: list[UUID] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class DevelopmentRunResult:
+    """The observable outcome of coordinating at most one task."""
+
+    status: RunStatus
+    task: DevelopmentTask | None = None
+    message: str = ""
+    worker_result: object | None = None
+    verification_result: object | None = None
+    review_result: object | None = None
+    git_status: object | None = None

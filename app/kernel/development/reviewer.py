@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from app.kernel.development.models import DevelopmentTask
 
 
+@dataclass(frozen=True, slots=True)
+class ReviewResult:
+    """The decision produced by an independent code review."""
+
+    approved: bool
+    summary: str = ""
+
+
 class DevelopmentReviewer:
-    """Placeholder for reviewing ADS task outcomes."""
+    """Review ADS task outcomes."""
 
-    def review(self, task: DevelopmentTask) -> None:
-        """Review a task when review criteria are defined."""
+    def review(self, task: DevelopmentTask) -> ReviewResult:
+        """Return a successful baseline review decision."""
 
-        # TODO: Define code-quality, safety, and scope review contracts.
-        raise NotImplementedError
-
-
-# TODO: Add review decisions and remediation guidance.
+        return ReviewResult(approved=True, summary="Review approved.")

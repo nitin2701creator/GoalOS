@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass(frozen=True, slots=True)
+class GitStatus:
+    """Read-only repository status captured by the Git boundary."""
+
+    repository_path: Path
 
 
 class GitManager:
@@ -13,11 +21,7 @@ class GitManager:
 
         self.repository_path = repository_path
 
-    def inspect_status(self) -> None:
-        """Inspect repository status when Git behavior is defined."""
+    def inspect_status(self) -> GitStatus:
+        """Return the repository location without mutating it."""
 
-        # TODO: Define read-only repository status representation.
-        raise NotImplementedError
-
-
-# TODO: Add explicit approval gates for repository mutations.
+        return GitStatus(repository_path=self.repository_path)

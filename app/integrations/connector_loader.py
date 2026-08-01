@@ -18,7 +18,7 @@ ConnectorClass: TypeAlias = type[BaseConnector]
 
 
 class ConnectorLoader:
-    """Discover, instantiate, and initialize connectors for one runtime."""
+    """Discover connector classes, instantiate them, and register instances."""
 
     def __init__(self, registry: ConnectorRegistry | None = None) -> None:
         """Create a loader with an injected registry when desired."""
@@ -67,7 +67,7 @@ class ConnectorLoader:
         return discovered
 
     def load_connectors(self) -> Mapping[str, BaseConnector]:
-        """Instantiate and initialize all discovered and registered connectors."""
+        """Instantiate, initialize, and register discovered connectors."""
 
         for connector_class in self._discovered_connector_classes.values():
             connector = connector_class()

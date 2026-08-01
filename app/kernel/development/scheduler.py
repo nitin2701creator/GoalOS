@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from app.kernel.development.models import DevelopmentTask
+from app.kernel.development.models import DevelopmentTask, TaskStatus
 
 
 class DevelopmentScheduler:
-    """Placeholder for selecting the next eligible ADS task."""
+    """Select the next pending ADS task in the supplied order."""
 
     def select_next(self, tasks: tuple[DevelopmentTask, ...]) -> DevelopmentTask | None:
-        """Select a task when ordering and eligibility rules are defined."""
+        """Select the first pending task, if any."""
 
-        # TODO: Define deterministic scheduling and dependency rules.
-        raise NotImplementedError
-
-
-# TODO: Add scheduling policy and queue state contracts.
+        return next((task for task in tasks if task.status is TaskStatus.PENDING), None)

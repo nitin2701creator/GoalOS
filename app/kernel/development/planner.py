@@ -6,13 +6,13 @@ from app.kernel.development.models import DevelopmentTask
 
 
 class DevelopmentPlanner:
-    """Placeholder for translating ADS inputs into development tasks."""
+    """Planning boundary for a selected development objective."""
 
     def plan(self, objective: str) -> tuple[DevelopmentTask, ...]:
-        """Plan tasks for an objective when planning rules are defined."""
+        """Return the planned task collection for ``objective``.
 
-        # TODO: Define objective decomposition and approval requirements.
-        raise NotImplementedError
+        The orchestrator already has a selected task, so the default planner
+        deliberately creates no additional backlog items.
+        """
 
-
-# TODO: Introduce planning inputs, outputs, and traceability metadata.
+        return ()
