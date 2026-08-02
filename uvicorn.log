@@ -1,6 +1,0 @@
-INFO:     127.0.0.1:57639 - "GET /openapi.json HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57642 - "GET /docs HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57645 - "POST /api/v1/goals HTTP/1.1" 201 Created
-INFO:     127.0.0.1:57645 - "POST /api/v1/objectives HTTP/1.1" 201 Created
-INFO:     127.0.0.1:57645 - "POST /api/v1/objectives HTTP/1.1" 201 Created
-INFO:     127.0.0.1:57645 - "GET /api/v1/goals/e2b2a473-c324-4a0a-a328-bc8dc516c9b4/summary HTTP/1.1" 200 OK
