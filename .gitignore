@@ -40,4 +40,4 @@ build/
 dist/
 *.egg-info/
 collect_errors.txt
-error.txts
+error.txt
