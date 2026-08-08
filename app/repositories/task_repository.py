@@ -62,3 +62,21 @@ class TaskRepository:
             .order_by(Task.created_at.desc())
         )
         return self.db.scalars(statement).all()
+
+    def claim_next_task(self, worker_id: uuid.UUID) -> Task | None:
+        """Atomically claims the next available task for execution."""
+        # Use a raw SQL UPDATE with RETURNING for atomic claiming
+        # This prevents race conditions where two workers might grab the same task
+        stmt = (
+            Task.__table__.update()
+            .where(Task.status == "queued")
+            .values(status="executing", worker_id=worker_id)
+            .returning(Task)
+        )
+        result = self.db.execute(stmt)
+        task_row = result.fetchone()
+        if task_row:
+            self.db.commit()
+            # Fetch the actual ORM object to return
+            return self.get(task_row.id)
+        return None

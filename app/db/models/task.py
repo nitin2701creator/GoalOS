@@ -77,3 +77,6 @@ class Task(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    worker_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -14,6 +14,7 @@ from app.schemas.task import (
     TaskUpdateRequest,
 )
 from app.services.task_service import TaskService
+from app.worker.execution_worker import Worker
 
 router = APIRouter()
 
@@ -73,4 +74,27 @@ def get_task_summary(task_id: UUID, service: TaskService = Depends(_get_service)
     result = service.summary(task_id)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    return result
+
+
+@router.post("/claim", response_model=TaskResponse)
+def claim_and_execute_task(service: TaskService = Depends(_get_service)):
+    """Endpoint for a worker to claim and execute the next available task."""
+    repo = TaskRepository(service.repository.db)
+    worker = Worker(repo)
+    
+    # Claim the task first
+    claimed_task = worker.service.claim_task()
+    if not claimed_task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No tasks available to claim")
+    
+    task_id = claimed_task.id
+    
+    # Execute the task
+    worker.service.execute_task(task_id)
+    
+    # Fetch and return the final state of the task
+    result = service.get(task_id)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found after execution")
     return result

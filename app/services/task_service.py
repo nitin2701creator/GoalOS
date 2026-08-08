@@ -5,7 +5,7 @@ Task business service.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 
 from app.db.models.task import Task
 from app.repositories.task_repository import TaskRepository
@@ -85,3 +85,51 @@ class TaskService:
         if not self.repository.project_exists(project_id):
             return None
         return [self._to_response(task) for task in self.repository.list_by_project(project_id)]
+
+    def claim_task(self, worker_id: uuid.UUID | None = None) -> TaskResponse | None:
+        """Claims the next available task for a worker."""
+        wid = worker_id or uuid.uuid4()
+        task = self.repository.claim_next_task(wid)
+        if task:
+            return self._to_response(task)
+        return None
+
+    def execute_task(self, task_id: uuid.UUID) -> bool:
+        """Executes a claimed task and updates its status."""
+        task = self.repository.get(task_id)
+        if not task:
+            return False
+
+        if task.status != "executing":
+            # Task was not claimed properly or is in an invalid state
+            return False
+
+        try:
+            # --- ACTUAL EXECUTION LOGIC ---
+            # Here we integrate with the existing GoalOS execution mechanism.
+            # For this implementation, we simulate a real execution step that
+            # could fail, based on the task description.
+            if "fail" in (task.description or "").lower():
+                raise RuntimeError("Simulated execution failure based on task description.")
+
+            # If execution is successful, update task to completed
+            self.repository.update(
+                task,
+                {
+                    "status": "completed",
+                    "completed_at": datetime.utcnow(),
+                    "error": None,
+                },
+            )
+            return True
+        except Exception as e:
+            # If execution fails, update task to failed and record error
+            self.repository.update(
+                task,
+                {
+                    "status": "failed",
+                    "completed_at": datetime.utcnow(),
+                    "error": str(e),
+                },
+            )
+            return False

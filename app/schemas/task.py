@@ -59,6 +59,9 @@ class TaskResponse(BaseModel):
     result: Optional[str]
     created_at: datetime
     updated_at: datetime
+    worker_id: Optional[UUID] = None
+    completed_at: Optional[datetime] = None
+    error: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
