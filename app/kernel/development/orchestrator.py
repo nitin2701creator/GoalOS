@@ -76,7 +76,7 @@ class DevelopmentOrchestrator:
             plan = self.planner.plan(selected.description)
             
             # Build prompt with context
-            prompt = self.prompt_builder.build(selected, plan=plan)
+            prompt = self.prompt_builder.build(selected)
             
             # Execute with worker
             worker_result = self.worker.execute(prompt)
@@ -163,6 +163,7 @@ class DevelopmentOrchestrator:
         message: str,
         worker_result: object | None = None,
         verification_result: object | None = None,
+        review_result: object | None = None,
     ) -> DevelopmentRunResult:
         task.status = TaskStatus.FAILED
         return DevelopmentRunResult(
@@ -171,4 +172,5 @@ class DevelopmentOrchestrator:
             message,
             worker_result,
             verification_result,
+            review_result,
         )
