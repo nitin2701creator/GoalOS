@@ -112,7 +112,7 @@ class DevelopmentOrchestrator:
 
             # Commit changes
             git_status = None
-            if self.git_manager and worker_result.modified_files:
+            if self.git_manager:
                 commit_msg = f"feat: {selected.description[:50]}"
                 if self.git_manager.commit(commit_msg):
                     git_status = self.git_manager.inspect_status()
