@@ -18,7 +18,7 @@ from app.kernel.development.prompt_builder import PromptBuilder
 from app.kernel.development.reviewer import DevelopmentReviewer
 from app.kernel.development.scheduler import DevelopmentScheduler
 from app.kernel.development.verifier import DevelopmentVerifier
-from app.kernel.development.worker import DevelopmentWorker, MockWorker
+from app.kernel.development.worker import DevelopmentWorker, LLMWorker, MockWorker
 
 
 class DevelopmentOrchestrator:
@@ -35,15 +35,28 @@ class DevelopmentOrchestrator:
         reviewer: DevelopmentReviewer | None = None,
         git_manager: GitManager | None = None,
         memory: DevelopmentMemory | None = None,
+        use_llm_worker: bool = False,
+        llm_model: str = "gpt-4",
     ) -> None:
         self.backlog = backlog or Backlog()
         self.scheduler = scheduler or DevelopmentScheduler()
         self.planner = planner or DevelopmentPlanner()
         self.prompt_builder = prompt_builder or PromptBuilder()
-        self.worker = worker or MockWorker()
-        self.verifier = verifier or DevelopmentVerifier()
-        self.reviewer = reviewer or DevelopmentReviewer()
+        
+        # Initialize Git manager first as other components may need it
         self.git_manager = git_manager or GitManager(Path.cwd())
+        
+        # Initialize worker with Git manager
+        if worker is not None:
+            self.worker = worker
+        elif use_llm_worker:
+            self.worker = LLMWorker(model=llm_model, git_manager=self.git_manager)
+        else:
+            self.worker = MockWorker()
+        
+        # Initialize verifier and reviewer with Git manager
+        self.verifier = verifier or DevelopmentVerifier(git_manager=self.git_manager)
+        self.reviewer = reviewer or DevelopmentReviewer(git_manager=self.git_manager)
         self.memory = memory or DevelopmentMemory()
 
     def run(self, task: DevelopmentTask | None = None) -> DevelopmentRunResult:
@@ -59,12 +72,22 @@ class DevelopmentOrchestrator:
 
         selected.status = TaskStatus.RUNNING
         try:
-            self.planner.plan(selected.description)
-            prompt = self.prompt_builder.build(selected)
+            # Plan the task
+            plan = self.planner.plan(selected.description)
+            
+            # Build prompt with context
+            prompt = self.prompt_builder.build(selected, plan=plan)
+            
+            # Execute with worker
             worker_result = self.worker.execute(prompt)
             if not worker_result.success:
                 return self._failed(selected, worker_result.summary, worker_result=worker_result)
 
+            # Stage modified files
+            if worker_result.modified_files and self.git_manager:
+                self.git_manager.stage_files(worker_result.modified_files)
+
+            # Verify implementation
             verification_result = self.verifier.verify(selected)
             if not self._passed(verification_result, "passed"):
                 return self._failed(
@@ -74,6 +97,7 @@ class DevelopmentOrchestrator:
                     verification_result=verification_result,
                 )
 
+            # Review implementation
             review_result = self.reviewer.review(selected)
             if not self._passed(review_result, "approved"):
                 selected.status = TaskStatus.BLOCKED
@@ -86,7 +110,14 @@ class DevelopmentOrchestrator:
                     review_result,
                 )
 
-            git_status = self.git_manager.inspect_status()
+            # Commit changes
+            git_status = None
+            if self.git_manager and worker_result.modified_files:
+                commit_msg = f"feat: {selected.description[:50]}"
+                if self.git_manager.commit(commit_msg):
+                    git_status = self.git_manager.inspect_status()
+
+            # Remember successful completion
             self.memory.remember(
                 str(selected.id),
                 {"task": selected, "worker_result": worker_result},
@@ -95,7 +126,7 @@ class DevelopmentOrchestrator:
             return DevelopmentRunResult(
                 RunStatus.COMPLETED,
                 selected,
-                "Task completed.",
+                "Task completed successfully.",
                 worker_result,
                 verification_result,
                 review_result,
@@ -103,6 +134,16 @@ class DevelopmentOrchestrator:
             )
         except Exception as error:
             return self._failed(selected, str(error) or type(error).__name__)
+
+    def run_continuous(self, max_tasks: int = 10) -> list[DevelopmentRunResult]:
+        """Run multiple tasks from backlog until empty or max reached."""
+        results = []
+        for _ in range(max_tasks):
+            result = self.run()
+            results.append(result)
+            if result.status in (RunStatus.EMPTY, RunStatus.FAILED):
+                break
+        return results
 
     @staticmethod
     def _passed(result: object, attribute: str) -> bool:
@@ -116,8 +157,8 @@ class DevelopmentOrchestrator:
     def _summary(result: object, fallback: str) -> str:
         return str(getattr(result, "summary", fallback))
 
-    @staticmethod
     def _failed(
+        self,
         task: DevelopmentTask,
         message: str,
         worker_result: object | None = None,
@@ -131,6 +172,3 @@ class DevelopmentOrchestrator:
             worker_result,
             verification_result,
         )
-
-
-# TODO: Add explicit orchestration state and lifecycle events.
