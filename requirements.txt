@@ -1,0 +1,9 @@
+# GoalOS runtime dependencies (KVM Docker image).
+# Aider, Codex, or VS Code are NOT required — GoalOS is fully autonomous
+# on the KVM using these packages plus the Python standard library.
+fastapi==0.141.1
+uvicorn==0.52.1
+sqlalchemy==2.0.51
+pydantic==2.13.4
+pypdf==6.15.0
+requests==2.34.2

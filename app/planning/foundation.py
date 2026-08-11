@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any
+
+from app.compat import StrEnum
 
 
 class PlanningArtifactType(StrEnum):

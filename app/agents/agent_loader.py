@@ -47,9 +47,16 @@ class AgentLoader:
         discovered: list[str] = []
         for module in modules:
             for _, agent_class in inspect.getmembers(module, inspect.isclass):
-                if agent_class is BaseAgent or not issubclass(agent_class, BaseAgent):
+                # ``inspect.isclass`` also reports PEP 585 aliases such as
+                # ``AgentClass: TypeAlias = type[BaseAgent]`` (a GenericAlias
+                # whose ``__module__`` is ``builtins``). Require a real class
+                # defined in the walked module before subclass checks.
+                if (
+                    not isinstance(agent_class, type)
+                    or agent_class.__module__ != module.__name__
+                ):
                     continue
-                if agent_class.__module__ != module.__name__:
+                if agent_class is BaseAgent or not issubclass(agent_class, BaseAgent):
                     continue
                 try:
                     self.registry.register(agent_class)

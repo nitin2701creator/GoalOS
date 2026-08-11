@@ -25,7 +25,7 @@ def test_email_connector_initializes_with_safe_default_configuration() -> None:
     assert connector.status is ConnectorHealthStatus.DISCONNECTED
     assert connector.get_capabilities() == (
         "authenticate", "list_folders", "list_messages", "get_message",
-        "search_messages", "send_message", "reply",
+        "search_messages", "create_draft", "send_message", "reply",
     )
 
 

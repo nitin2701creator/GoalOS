@@ -11,6 +11,7 @@ class ConnectorHealthStatus(str, Enum):
 
     HEALTHY = "Healthy"
     DISCONNECTED = "Disconnected"
+    NOT_CONFIGURED = "Not Configured"
     AUTHENTICATION_REQUIRED = "Authentication Required"
     ERROR = "Error"
 

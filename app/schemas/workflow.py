@@ -1,26 +1,32 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 
 class WorkflowCreateRequest(BaseModel):
     project_id: UUID
     name: str
-    status: Optional[str] = None
-    progress_percentage: Optional[int] = None
+    status: str | None = None
+    progress_percentage: int | None = None
 
 
 class WorkflowUpdateRequest(BaseModel):
-    project_id: Optional[UUID] = None
-    name: Optional[str] = None
-    status: Optional[str] = None
-    progress_percentage: Optional[int] = None
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    project_id: UUID | None = None
+    name: str | None = None
+    status: str | None = None
+    progress_percentage: int | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class AgentWorkflowRunRequest(BaseModel):
+    """Request to run an agent workflow against a workflow."""
+
+    requirement: str = Field(min_length=1)
 
 
 class WorkflowResponse(BaseModel):
@@ -29,9 +35,25 @@ class WorkflowResponse(BaseModel):
     name: str
     status: str
     progress_percentage: int
-    started_at: Optional[datetime]
-    completed_at: Optional[datetime]
+    started_at: datetime | None
+    completed_at: datetime | None
+    requirement: str | None = None
+    resolved_capabilities: list[str] | None = None
+    steps: list[dict[str, Any]] | None = None
+    results: dict[str, Any] | None = None
+    evaluation: dict[str, Any] | None = None
+    error_message: str | None = None
+    schedule: str | None = None
+    schedule_enabled: bool = False
+    next_run_at: datetime | None = None
+    last_run_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_validator("schedule_enabled", mode="before")
+    @classmethod
+    def _coerce_schedule_enabled(cls, value: object) -> object:
+        """Treat legacy NULL rows (pre-migration) as disabled."""
+        return False if value is None else value

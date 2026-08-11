@@ -4,14 +4,101 @@ Workflow business service.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
-from app.db.models.execution import ExecutionStatus
+from app.agents.capabilities import capability_spec, resolve_capabilities
 from app.db.models.workflow import Workflow, WorkflowStatus
-from app.repositories.workflow_repository import WorkflowRepository
+from app.integrations.connector_registry import ConnectorRegistry
+from app.integrations.factory import integration_for_capability
 from app.repositories.execution_repository import ExecutionRepository
-from app.schemas.workflow import WorkflowCreateRequest, WorkflowResponse, WorkflowUpdateRequest
+from app.repositories.workflow_repository import WorkflowRepository
+from app.schemas.agent import AgentCreateRequest, AgentResponse
+from app.schemas.workflow import (
+    WorkflowCreateRequest,
+    WorkflowResponse,
+    WorkflowUpdateRequest,
+)
+from app.services.agent_factory import AgentFactoryService
+from app.services.capability_service import CapabilityService
+
+#: Deterministic regions recognised in workflow requirements.
+_REGION_KEYWORDS = (
+    "india",
+    "united states",
+    "usa",
+    "europe",
+    "uk",
+    "canada",
+    "germany",
+    "france",
+    "australia",
+    "japan",
+)
+
+#: Common acronyms excluded from subject extraction so proper nouns win.
+_ACRONYMS = frozenset({"SEO", "KPI", "AI", "API", "ROI", "CRM", "ERP", "MRR"})
+
+_URL_PATTERN = re.compile(r"(https?://[^\s'\"<>]+|www\.[^\s'\"<>]+)")
+
+
+def _extract_subject(requirement: str) -> str:
+    """Derive a deterministic subject from a workflow requirement.
+
+    The last capitalized proper noun (excluding common acronyms) wins;
+    otherwise the whole requirement is used.
+    """
+    candidates = []
+    for token in requirement.split():
+        if not (token[0].isupper() and len(token) > 1 and token not in _ACRONYMS):
+            continue
+        candidates.append(re.sub(r"^['\".,!?;:]+|['\".,!?;:]+$", "", token))
+    if candidates:
+        return candidates[-1].casefold()
+    return requirement.strip().casefold()
+
+
+def _extract_url(requirement: str) -> str:
+    """Return the first URL mentioned in the requirement, if any."""
+    match = _URL_PATTERN.search(requirement)
+    if match is None:
+        return ""
+    return match.group(1).rstrip(".,;!?")
+
+
+def _extract_region(requirement: str) -> str:
+    """Return the first known region mentioned, else an empty string."""
+    text = requirement.casefold()
+    for region in _REGION_KEYWORDS:
+        if region in text:
+            return region
+    return ""
+
+
+def derive_workflow_input(requirement: str) -> dict[str, Any]:
+    """Build the deterministic execution input for a workflow requirement.
+
+    Every catalog skill reads only the keys it needs, so one shared input
+    mapping serves any capability set without special-casing.
+    """
+    subject = _extract_subject(requirement)
+    return {
+        "requirement": requirement,
+        "topic": subject,
+        "query": requirement,
+        "content": requirement,
+        "url": _extract_url(requirement) or "",
+        "industry": subject,
+        "region": _extract_region(requirement) or "global",
+        "text": requirement,
+        "lead": requirement,
+        "criteria": ["qualified", "reachable", "responsive"],
+        "subject": subject,
+        "outline": requirement,
+        "recipient": "",
+    }
 
 
 class WorkflowService:
@@ -114,6 +201,256 @@ class WorkflowService:
 
         workflow.progress_percentage = max(0, min(progress_percentage, 100))
         return self._to_response(self.repository.update(workflow, {"progress_percentage": workflow.progress_percentage}))
+
+    def run_agent_workflow(
+        self,
+        workflow_id: UUID,
+        requirement: str,
+        agent_factory: AgentFactoryService,
+        integration_registry: ConnectorRegistry | None = None,
+        capabilities: tuple[str, ...] | None = None,
+        capability_service: CapabilityService | None = None,
+        resolved_capabilities: list[str] | None = None,
+    ) -> WorkflowResponse | None:
+        """Run an autonomous agent workflow against an existing workflow.
+
+        The run composes the existing GoalOS pieces: capability analysis
+        (the capability engine or ``resolve_capabilities``), the agent
+        factory (reuse or create the agents and skills), the integration
+        registry (availability and permission checks per capability), and
+        the existing ``BaseAgent`` runtime for execution. Every step
+        result, the aggregate results, and the evaluation are persisted on
+        the workflow record.
+
+        Args:
+            workflow_id: The workflow to execute against.
+            requirement: The business requirement to resolve into
+                capabilities.
+            agent_factory: The agent factory used to resolve/create agents.
+            integration_registry: Integration connectors; when provided,
+                required integrations are enforced per step and missing
+                ones are persisted as blocked reasons (never faked).
+            capabilities: Optional explicit execution capability set. When
+                omitted it is derived from ``requirement`` (via
+                ``capability_service`` when provided, else the keyword
+                catalog).
+            capability_service: The capability engine; when provided (and
+                ``capabilities`` is omitted) the goal is resolved through
+                the persistent capability registry.
+            resolved_capabilities: Registry capability names matched to
+                the goal, persisted on the workflow for auditability.
+
+        Returns:
+            The updated workflow, or ``None`` if it does not exist.
+
+        Raises:
+            ValueError: If the workflow has already been run.
+        """
+        workflow = self.repository.get(workflow_id)
+        if workflow is None:
+            return None
+        if workflow.steps:
+            raise ValueError("workflow has already been run")
+
+        if capability_service is not None and capabilities is None:
+            resolution = capability_service.resolve_for_goal(requirement)
+            capabilities = tuple(resolution.execution_capabilities)
+            resolved_capabilities = list(resolution.capabilities)
+        if capabilities is None:
+            capabilities = resolve_capabilities(requirement)
+        if resolved_capabilities is None:
+            resolved_capabilities = list(capabilities)
+
+        started_at = datetime.now(timezone.utc)
+        workflow = self.repository.update(
+            workflow,
+            {
+                "status": WorkflowStatus.RUNNING,
+                "started_at": started_at,
+                "requirement": requirement,
+                "resolved_capabilities": resolved_capabilities,
+                "steps": [],
+                "results": {},
+                "evaluation": None,
+                "error_message": None,
+                "progress_percentage": 5,
+            },
+        )
+
+        if not capabilities:
+            return self._fail_run(
+                workflow,
+                "no capabilities could be resolved from the requirement",
+            )
+
+        # Resolve an existing ACTIVE agent or create the missing one. The
+        # factory enforces explicit authorization for dangerous permissions,
+        # so an unprivileged run can never self-authorize code execution.
+        try:
+            resolved = agent_factory.resolve_for_capabilities(
+                requirement, capabilities
+            )
+            if resolved.agent is not None:
+                agent = resolved.agent
+            else:
+                spec = resolved.specification
+                assert spec is not None
+                agent = agent_factory.create_agent(
+                    AgentCreateRequest(
+                        name=spec.name,
+                        purpose=spec.purpose,
+                        required_capabilities=list(spec.capabilities),
+                    )
+                )
+        except ValueError as exc:
+            return self._fail_run(workflow, str(exc))
+
+        steps: list[dict[str, Any]] = [
+            {
+                "capability": capability,
+                "agent_name": agent.name,
+                "status": "Pending",
+                "result": None,
+                "error": None,
+            }
+            for capability in capabilities
+        ]
+        step_count = len(steps)
+        blocked_reasons: list[str] = []
+        if integration_registry is not None:
+            for step in steps:
+                blockers = self._step_integration_blockers(
+                    step["capability"], agent, integration_registry
+                )
+                if blockers:
+                    step["status"] = "Blocked"
+                    step["error"] = "; ".join(blockers)
+                    blocked_reasons.extend(blockers)
+        workflow = self.repository.update(
+            workflow, {"steps": steps, "progress_percentage": 10}
+        )
+
+        if any(step["status"] == "Blocked" for step in steps):
+            return self._fail_run(
+                workflow,
+                "required integrations are not available: "
+                + "; ".join(dict.fromkeys(blocked_reasons)),
+            )
+
+        try:
+            execution = agent_factory.execute_agent(
+                agent.id,
+                goal=requirement,
+                inputs=derive_workflow_input(requirement),
+                integrations=integration_registry,
+            )
+        except (KeyError, ValueError) as exc:
+            return self._fail_run(workflow, str(exc))
+
+        results = execution.results
+        execution_errors = list(execution.errors)
+        for step in steps:
+            capability = step["capability"]
+            if capability in results:
+                step["status"] = "Completed"
+                step["result"] = results[capability]
+            else:
+                step["status"] = "Failed"
+                step["error"] = (
+                    next(
+                        (
+                            error
+                            for error in execution_errors
+                            if capability in error
+                        ),
+                        f"agent reported no result for capability {capability}",
+                    )
+                )
+
+        completed_steps = sum(1 for step in steps if step["status"] == "Completed")
+        failed_steps = step_count - completed_steps
+        passed = failed_steps == 0
+        evaluation = {
+            "status": "Passed" if passed else "Failed",
+            "passed": passed,
+            "completed_steps": completed_steps,
+            "failed_steps": failed_steps,
+            "total_steps": step_count,
+            "summary": (
+                f"Executed {step_count} capability step(s) via agent "
+                f"'{agent.name}': {completed_steps} completed, {failed_steps} failed."
+            ),
+        }
+
+        completed_at = datetime.now(timezone.utc)
+        updates: dict[str, Any] = {
+            "steps": steps,
+            "results": results,
+            "evaluation": evaluation,
+            "progress_percentage": 100 if passed else 40,
+            "completed_at": completed_at,
+        }
+        if passed:
+            updates["status"] = WorkflowStatus.COMPLETED
+        else:
+            updates["status"] = WorkflowStatus.FAILED
+            updates["error_message"] = (
+                f"{failed_steps} of {step_count} capability step(s) failed"
+            )
+        workflow = self.repository.update(workflow, updates)
+        return self._to_response(workflow)
+
+    @staticmethod
+    def _step_integration_blockers(
+        capability: str,
+        agent: AgentResponse,
+        registry: ConnectorRegistry,
+    ) -> list[str]:
+        """Return why one capability cannot run against the registry."""
+        try:
+            spec = capability_spec(capability)
+        except ValueError:
+            return []
+        blockers: list[str] = []
+        for capability_name in spec.integration_capabilities:
+            integration = integration_for_capability(capability_name)
+            connector = registry.get_connector(integration)
+            if connector is None:
+                blockers.append(
+                    f"required integration '{integration}' is not registered"
+                )
+                continue
+            available, reason = connector.capability_available(capability_name)
+            if not available:
+                blockers.append(
+                    f"required capability '{capability_name}' is unavailable: {reason}"
+                )
+            required = getattr(connector, "CAPABILITY_PERMISSIONS", {}).get(
+                capability_name
+            )
+            if required is not None and required not in agent.permissions:
+                blockers.append(
+                    f"capability '{capability_name}' requires permission "
+                    f"'{required.value}', which the agent does not hold"
+                )
+        return blockers
+
+    def _fail_run(self, workflow: Workflow, message: str) -> WorkflowResponse:
+        """Persist a failed agent workflow run with its error reason."""
+        workflow = self.repository.update(
+            workflow,
+            {
+                "status": WorkflowStatus.FAILED,
+                "completed_at": datetime.now(timezone.utc),
+                "error_message": message,
+                "evaluation": {
+                    "status": "Failed",
+                    "passed": False,
+                    "summary": message,
+                },
+            },
+        )
+        return self._to_response(workflow)
 
     def update_status_from_tasks(self, workflow_id: UUID) -> WorkflowResponse | None:
         workflow = self.repository.get_with_tasks(workflow_id)

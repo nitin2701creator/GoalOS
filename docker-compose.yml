@@ -1,0 +1,54 @@
+# GoalOS + OpenWebUI on the KVM.
+#
+# GoalOS and OpenWebUI run as separate containers on the same KVM and talk
+# over the Docker network by service name — never localhost. OpenWebUI is
+# pointed at http://goalos:8000/v1 with the key from GOALOS_OPENWEBUI_API_KEY.
+#
+# LLM_PROVIDER=openai_compatible + LLM_API_BASE_URL=<FreeLLMAPI endpoint>
+# lets GoalOS use the FreeLLMAPI gateway for LLM reasoning. Example values
+# below assume the freellmapi service; adjust to your deployment.
+services:
+  goalos:
+    build: .
+    container_name: goalos
+    ports:
+      - "8000:8000"
+    volumes:
+      - goalos-data:/data
+    environment:
+      # OpenAI-compatible surface consumed by OpenWebUI.
+      GOALOS_OPENWEBUI_API_KEY: "${GOALOS_OPENWEBUI_API_KEY:?set this in .env}"
+      # OpenWebUI origin (for CORS) — use the public/KVM URL, not localhost.
+      OPENWEBUI_BASE_URL: "${OPENWEBUI_BASE_URL:-http://localhost:3000}"
+      # LLM gateway configuration (FreeLLMAPI on the same Docker network).
+      LLM_PROVIDER: "${LLM_PROVIDER:-openai_compatible}"
+      LLM_API_BASE_URL: "${LLM_API_BASE_URL:-http://freellmapi:8000/v1/chat/completions}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-free-llm-small}"
+      # Integration credentials (optional; integrations report Not Configured
+      # until these are set).
+      GOALOS_SEARCH_PROVIDER: "${GOALOS_SEARCH_PROVIDER:-duckduckgo}"
+      GOALOS_GMAIL_CLIENT_ID: "${GOALOS_GMAIL_CLIENT_ID:-}"
+      GOALOS_GMAIL_CLIENT_SECRET: "${GOALOS_GMAIL_CLIENT_SECRET:-}"
+      GOALOS_GMAIL_REFRESH_TOKEN: "${GOALOS_GMAIL_REFRESH_TOKEN:-}"
+      GOALOS_WOO_URL: "${GOALOS_WOO_URL:-}"
+      GOALOS_WOO_CONSUMER_KEY: "${GOALOS_WOO_CONSUMER_KEY:-}"
+      GOALOS_WOO_CONSUMER_SECRET: "${GOALOS_WOO_CONSUMER_SECRET:-}"
+      GOALOS_GA4_PROPERTY_ID: "${GOALOS_GA4_PROPERTY_ID:-}"
+      GOALOS_GA4_CLIENT_EMAIL: "${GOALOS_GA4_CLIENT_EMAIL:-}"
+      GOALOS_GA4_PRIVATE_KEY: "${GOALOS_GA4_PRIVATE_KEY:-}"
+      GOALOS_META_ACCESS_TOKEN: "${GOALOS_META_ACCESS_TOKEN:-}"
+      GOALOS_META_AD_ACCOUNT_ID: "${GOALOS_META_AD_ACCOUNT_ID:-}"
+    restart: unless-stopped
+
+  # FreeLLMAPI LLM gateway (adjust image/env to your gateway). Comment out
+  # when pointing LLM_API_BASE_URL at an external gateway.
+  freellmapi:
+    image: "${FREELLMAPI_IMAGE:-freellm/freellm-api:latest}"
+    container_name: freellmapi
+    environment:
+      API_KEY: "${LLM_API_KEY:-}"
+    restart: unless-stopped
+
+volumes:
+  goalos-data:

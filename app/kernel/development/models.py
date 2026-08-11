@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
 from pathlib import Path
 from uuid import UUID, uuid4
+
+from app.compat import StrEnum
 
 
 class TaskStatus(StrEnum):

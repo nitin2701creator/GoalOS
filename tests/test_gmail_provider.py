@@ -96,4 +96,4 @@ def test_gmail_provider_has_safe_placeholder_api_behavior_without_sdk_or_credent
         provider.authenticate()
     with pytest.raises(NotImplementedError, match="Gmail API service"):
         provider.list_folders()
-    assert provider.health_check().status is ConnectorHealthStatus.DISCONNECTED
+    assert provider.health_check().status is ConnectorHealthStatus.NOT_CONFIGURED

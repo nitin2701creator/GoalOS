@@ -6,8 +6,9 @@ import importlib
 import inspect
 import logging
 import pkgutil
+from collections.abc import Mapping
 from types import MappingProxyType, ModuleType
-from typing import Mapping, TypeAlias
+from typing import TypeAlias
 
 from app.integrations.base_connector import BaseConnector
 from app.integrations.connector_registry import ConnectorRegistry

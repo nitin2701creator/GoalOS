@@ -7,9 +7,10 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import DateTime, Enum as SQLEnum, ForeignKey, Integer, String, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -48,6 +49,18 @@ class Workflow(Base):
     progress_percentage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Agent workflow run state: populated by WorkflowService.run_agent_workflow.
+    requirement: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_capabilities: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    steps: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    results: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    evaluation: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Scheduler state: persisted scheduled runs survive application restart.
+    schedule: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    schedule_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -55,7 +68,7 @@ class Workflow(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
-    tasks: Mapped[list["Task"]] = relationship(
+    tasks: Mapped[list[Task]] = relationship(
         back_populates="workflow",
         cascade="all, delete-orphan",
         passive_deletes=True,

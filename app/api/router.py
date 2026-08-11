@@ -1,13 +1,16 @@
 from fastapi import APIRouter
 
+from app.api.v1 import agents as agents_router
+from app.api.v1 import capabilities as capabilities_router
+from app.api.v1 import development as development_router
+from app.api.v1 import executions as executions_router
 from app.api.v1 import goals as goals_router
+from app.api.v1 import integrations as integrations_router
 from app.api.v1 import objectives as objectives_router
+from app.api.v1 import planning as planning_router
 from app.api.v1 import projects as projects_router
 from app.api.v1 import tasks as tasks_router
-from app.api.v1 import executions as executions_router
 from app.api.v1 import workflows as workflows_router
-from app.api.v1 import planning as planning_router
-
 
 api_router = APIRouter()
 
@@ -33,3 +36,7 @@ api_router.include_router(tasks_router.router, prefix="/v1/tasks", tags=["tasks"
 api_router.include_router(executions_router.router, prefix="/v1", tags=["executions"])
 api_router.include_router(workflows_router.router, prefix="/v1/workflows", tags=["workflows"])
 api_router.include_router(planning_router.router, prefix="/v1/planning", tags=["planning"])
+api_router.include_router(development_router.router, prefix="/v1/development", tags=["development"])
+api_router.include_router(agents_router.router, prefix="/v1/agents", tags=["agents"])
+api_router.include_router(capabilities_router.router, prefix="/v1/capabilities", tags=["capabilities"])
+api_router.include_router(integrations_router.router, prefix="/v1/integrations", tags=["integrations"])

@@ -10,9 +10,11 @@ from dataclasses import dataclass
 class LLMConfig:
     """Runtime settings used by the shared language-model client.
 
-    Environment variable names use the ``FREELLM_`` prefix. Legacy GoalOS
-    variable names are also supported to keep existing local configuration
-    working during the infrastructure migration.
+    Production names use the ``LLM_`` prefix (``LLM_API_BASE_URL``,
+    ``LLM_API_KEY``, ``LLM_MODEL``) so a KVM deployment can point GoalOS
+    at any OpenAI-compatible gateway with ``LLM_PROVIDER=openai_compatible``.
+    Legacy ``FREELLM_*``/``FREELLMAPI_*`` names are still honoured as
+    fallbacks for existing local configuration.
     """
 
     base_url: str = "https://api.freellm.example.com"
@@ -22,7 +24,7 @@ class LLMConfig:
     max_retries: int = 3
 
     @classmethod
-    def from_env(cls) -> "LLMConfig":
+    def from_env(cls) -> LLMConfig:
         """Build configuration from environment variables.
 
         Raises:
@@ -31,19 +33,20 @@ class LLMConfig:
 
         return cls(
             base_url=_environment_value(
+                "LLM_API_BASE_URL",
                 "FREELLM_BASE_URL",
                 "FREELLMAPI_BASE_URL",
                 default=cls.base_url,
             ),
             api_key=_environment_value(
-                "FREELLM_API_KEY", "FREELLMAPI_API_KEY", default=None
+                "LLM_API_KEY", "FREELLM_API_KEY", "FREELLMAPI_API_KEY", default=None
             ),
             timeout=_positive_float(
                 _environment_value("FREELLM_TIMEOUT", "LLM_TIMEOUT", default="30"),
                 "timeout",
             ),
             default_model=_environment_value(
-                "FREELLM_DEFAULT_MODEL", "DEFAULT_MODEL", default=cls.default_model
+                "LLM_MODEL", "FREELLM_DEFAULT_MODEL", "DEFAULT_MODEL", default=cls.default_model
             ),
             max_retries=_non_negative_int(
                 _environment_value("FREELLM_MAX_RETRIES", "LLM_MAX_RETRIES", default="3"),

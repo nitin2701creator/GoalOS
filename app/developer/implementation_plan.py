@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
-
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.compat import StrEnum
 
 
 class Priority(StrEnum):

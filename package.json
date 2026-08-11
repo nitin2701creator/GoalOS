@@ -1,0 +1,15 @@
+{
+  "name": "goalos",
+  "version": "0.0.1",
+  "private": true,
+  "description": "GoalOS — AI Operating System for Business Automation (documentation repo)",
+  "type": "module",
+  "scripts": {
+    "dev": "serve -l tcp://0.0.0.0:${PORT:-8080} .",
+    "start": "serve -l tcp://0.0.0.0:${PORT:-8080} .",
+    "build": "sh -c 'rm -rf dist && mkdir -p dist && cp -r agents app development docs workflows readme.md hello_codex.txt dist/'"
+  },
+  "dependencies": {
+    "serve": "^14.2.4"
+  }
+}

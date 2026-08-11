@@ -44,11 +44,19 @@ class SkillLoader:
 
         for module in modules:
             for _, skill_class in inspect.getmembers(module, inspect.isclass):
+                # ``inspect.isclass`` also reports PEP 585 aliases such as
+                # ``SkillClass: TypeAlias = type[BaseSkill]`` (a GenericAlias
+                # whose ``__module__`` is ``builtins``). Require a real class
+                # defined in the walked module before subclass checks.
+                if (
+                    not isinstance(skill_class, type)
+                    or skill_class.__module__ != module.__name__
+                ):
+                    continue
                 if (
                     skill_class is BaseSkill
                     or not issubclass(skill_class, BaseSkill)
                     or inspect.isabstract(skill_class)
-                    or skill_class.__module__ != module.__name__
                 ):
                     continue
                 self._discovered_skill_classes.setdefault(skill_class.__name__, skill_class)

@@ -6,6 +6,7 @@ import os
 
 from app.llm.base_provider import BaseProvider
 from app.llm.freellm_provider import FreeLLMProvider
+from app.llm.openai_compatible_provider import OpenAICompatibleProvider
 
 
 class ProviderFactory:
@@ -16,4 +17,6 @@ class ProviderFactory:
         provider_name = os.getenv("LLM_PROVIDER", "freellm").lower()
         if provider_name == "freellm":
             return FreeLLMProvider()
+        if provider_name in {"openai", "openai_compatible"}:
+            return OpenAICompatibleProvider()
         raise ValueError(f"Unsupported LLM provider: {provider_name}")

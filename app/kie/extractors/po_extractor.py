@@ -45,11 +45,13 @@ class PurchaseOrderExtractor:
             text,
             (
                 # “Purchase Order No: PO‑12345”, “PO‑12345”, “PO #12345” etc.
+                # The capture class deliberately excludes whitespace so the
+                # number cannot span into the next metadata line.
                 r"(?:purchase\s*order|p\.?\s*o\.?|po)\s*"
                 r"(?:no|number|#)\.?\s*[:\-]?\s*"
-                r"([A-Z0-9][A-Z0-9/_\-\s]*)",
+                r"([A-Z0-9][A-Z0-9/_\-]*)",
                 r"(?:purchase\s*order|p\.?\s*o\.?|po)\s*[:\-]\s*"
-                r"([A-Z0-9][A-Z0-9/_\-\s]*)",
+                r"([A-Z0-9][A-Z0-9/_\-]*)",
             ),
         )
 

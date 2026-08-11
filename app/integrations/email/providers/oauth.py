@@ -7,7 +7,11 @@ from typing import Protocol
 from app.integrations.email.authentication import OAuthAuthenticator
 from app.integrations.email.config import EmailConfig
 from app.integrations.email.providers.credentials import OAuthClientCredentials
-from app.integrations.email.providers.token_store import InMemoryTokenStore, OAuthToken, TokenStore
+from app.integrations.email.providers.token_store import (
+    InMemoryTokenStore,
+    OAuthToken,
+    TokenStore,
+)
 
 
 class OAuthAuthorizationClient(Protocol):

@@ -19,3 +19,11 @@ class ConfigurationError(ConnectorError):
 
 class ConnectorUnavailableError(ConnectorError):
     """Raised when a requested connector is unavailable to the runtime."""
+
+
+class PermissionDeniedError(ConnectorError):
+    """Raised when an operation requires a permission the caller lacks."""
+
+
+class CapabilityUnavailableError(ConnectorError):
+    """Raised when a requested capability is not configured or supported."""

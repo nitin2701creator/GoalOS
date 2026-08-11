@@ -63,6 +63,10 @@ class EmailConnector(BaseConnector):
     def search_messages(self, query: str) -> EmailSearchResult:
         self._not_implemented("search_messages")
 
+    def create_draft(self, message: EmailMessage) -> EmailMessage:
+        """Create a draft without sending it."""
+        self._not_implemented("create_draft")
+
     def send_message(self, message: EmailMessage) -> EmailMessage:
         self._not_implemented("send_message")
 
@@ -76,6 +80,7 @@ class EmailConnector(BaseConnector):
             "list_messages",
             "get_message",
             "search_messages",
+            "create_draft",
             "send_message",
             "reply",
         )

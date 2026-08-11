@@ -5,5 +5,15 @@ from app.integrations.email.providers.gmail_provider import (
     GmailService,
     UnavailableGmailService,
 )
+from app.integrations.email.providers.gmail_rest_service import (
+    GmailRESTService,
+    GmailTokenProvider,
+)
 
-__all__ = ["GmailProvider", "GmailService", "UnavailableGmailService"]
+__all__ = [
+    "GmailProvider",
+    "GmailRESTService",
+    "GmailService",
+    "GmailTokenProvider",
+    "UnavailableGmailService",
+]
