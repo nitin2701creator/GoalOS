@@ -47,6 +47,7 @@ class WorkflowResponse(BaseModel):
     schedule_enabled: bool = False
     next_run_at: datetime | None = None
     last_run_at: datetime | None = None
+    scheduled_from_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
 

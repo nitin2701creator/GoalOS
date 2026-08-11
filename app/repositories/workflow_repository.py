@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.models.project import Project
-from app.db.models.workflow import Workflow
+from app.db.models.workflow import Workflow, WorkflowStatus
 from app.schemas.workflow import WorkflowCreateRequest
 
 
@@ -53,6 +53,15 @@ class WorkflowRepository:
         )
         return self.db.scalars(statement).all()
 
+    def list_scheduled(self) -> Sequence[Workflow]:
+        """Return every workflow with a persisted schedule, next-run ordered."""
+        statement = (
+            select(Workflow)
+            .where(Workflow.schedule.is_not(None))
+            .order_by(Workflow.next_run_at.asc().nulls_last())
+        )
+        return self.db.scalars(statement).all()
+
     def update(self, workflow: Workflow, updates: dict[str, Any]) -> Workflow:
         for field, value in updates.items():
             setattr(workflow, field, value)
@@ -66,4 +75,32 @@ class WorkflowRepository:
 
     def project_exists(self, project_id: uuid.UUID) -> bool:
         statement = select(Project.id).where(Project.id == project_id)
+        return self.db.scalars(statement).one_or_none() is not None
+
+    def list_runs_of(self, template_id: uuid.UUID) -> Sequence[Workflow]:
+        """Return the run instances cloned from a scheduled template."""
+        statement = (
+            select(Workflow)
+            .where(Workflow.scheduled_from_id == template_id)
+            .order_by(Workflow.created_at.desc())
+        )
+        return self.db.scalars(statement).all()
+
+    def has_in_flight_run(self, template_id: uuid.UUID) -> bool:
+        """Return whether a template has a run instance still in flight.
+
+        Used by the scheduler to refuse cloning a second run while a
+        previous scheduled run is still pending/running (crash-safe
+        duplicate prevention).
+        """
+        statement = (
+            select(Workflow.id)
+            .where(Workflow.scheduled_from_id == template_id)
+            .where(
+                Workflow.status.in_(
+                    (WorkflowStatus.PENDING, WorkflowStatus.RUNNING)
+                )
+            )
+            .limit(1)
+        )
         return self.db.scalars(statement).one_or_none() is not None

@@ -28,8 +28,12 @@ from sqlalchemy import text
 from app.db.session import get_db
 from app.integrations.factory import build_default_registry
 from app.llm.provider_factory import ProviderFactory
+from app.repositories.capability_repository import CapabilityRepository
+from app.repositories.runtime_execution_repository import RuntimeExecutionRepository
 from app.schemas.chat import GOALOS_MODEL_ID, ChatCompletionRequest
+from app.services.capability_service import CapabilityService
 from app.services.chat_service import ChatService, llm_configured
+from app.services.execution_runtime import ExecutionRuntimeService
 
 router = APIRouter()
 
@@ -125,7 +129,12 @@ def v1_health(request: Request, db=Depends(get_db)) -> dict[str, Any]:
 
 
 def build_health_payload(db) -> dict[str, Any]:
-    """Build the structured health payload shared by /health and /v1/health."""
+    """Build the structured health payload shared by /health and /v1/health.
+
+    Reports application, database, LLM provider configuration, the
+    scheduler worker, persisted execution statistics, and integration
+    configuration state — never credentials.
+    """
     try:
         db.execute(text("SELECT 1"))
         database = {"status": "healthy"}
@@ -155,13 +164,44 @@ def build_health_payload(db) -> dict[str, Any]:
             }
         )
 
+    worker = _worker_status()
     return {
         "status": "ok",
         "goalos": {"status": "running", "version": _GOALOS_VERSION},
         "database": database,
         "llm": llm,
+        "worker": worker,
+        "executions": _execution_stats(db),
         "integrations": {"total": len(integrations), "items": integrations},
     }
+
+
+def _worker_status() -> dict[str, Any]:
+    """Report the scheduler worker state honestly (no fake readiness)."""
+    from app.control_loop.scheduler_worker import get_scheduler_worker
+
+    worker = get_scheduler_worker()
+    return {
+        "type": "scheduler",
+        "status": "running" if worker.is_running else "stopped",
+        "enabled": worker.enabled,
+        "interval_seconds": worker.interval,
+        "last_tick_at": worker.last_tick_at,
+        "last_tick": worker.last_tick,
+        "tick_count": worker.tick_count,
+    }
+
+
+def _execution_stats(db) -> dict[str, Any]:
+    """Aggregate persisted runtime execution counts for the health payload."""
+    try:
+        runtime = ExecutionRuntimeService(
+            RuntimeExecutionRepository(db),
+            CapabilityService(CapabilityRepository(db)),
+        )
+        return runtime.stats()
+    except Exception as exc:  # noqa: BLE001 - health must never 500
+        return {"error": str(exc)}
 
 
 def _build_completion(payload: ChatCompletionRequest, content: str) -> dict[str, Any]:

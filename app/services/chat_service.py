@@ -43,6 +43,7 @@ from app.repositories.agent_repository import AgentRepository
 from app.repositories.execution_repository import ExecutionRepository
 from app.repositories.goal_repository import GoalRepository
 from app.repositories.project_repository import ProjectRepository
+from app.repositories.runtime_execution_repository import RuntimeExecutionRepository
 from app.repositories.skill_repository import SkillRepository
 from app.repositories.workflow_repository import WorkflowRepository
 from app.schemas.agent import AgentCreateRequest, AgentResponse
@@ -51,6 +52,7 @@ from app.schemas.goal import GoalCreateRequest
 from app.schemas.project import ProjectCreateRequest
 from app.schemas.workflow import WorkflowCreateRequest, WorkflowResponse
 from app.services.agent_factory import AgentFactoryService
+from app.services.execution_runtime import ExecutionRuntimeService
 from app.services.goal_service import GoalService
 from app.services.project_service import ProjectService
 from app.services.workflow_service import WorkflowService
@@ -257,26 +259,39 @@ class ChatService:
         requirement = build_requirement(request.messages)
         workflow = self._create_goal_chain(message)
         try:
-            result = self.workflow_service.run_agent_workflow(
+            # Approve the workflow through the workflow service, then run
+            # it through the execution runtime. The runtime resolves each
+            # capability through the capability engine, reuses/creates the
+            # executing agent (whose declared permissions are granted —
+            # never escalated), dispatches through the existing
+            # connectors/skills, and persists one runtime execution record
+            # per step.
+            self.workflow_service.approve(
                 workflow.id,
                 requirement,
-                self.agent_factory,
-                integration_registry=self.integration_registry,
                 capabilities=capabilities,
                 resolved_capabilities=list(resolution.capabilities),
+                capability_service=self.capability_service,
+            )
+            runtime = ExecutionRuntimeService(
+                RuntimeExecutionRepository(self.db),
+                self.capability_service,
+                workflow_repository=WorkflowRepository(self.db),
+            )
+            result = runtime.run_workflow(
+                workflow.id,
+                requirement=requirement,
+                capabilities=capabilities,
+                agent_factory=self.agent_factory,
             )
         except ValueError as exc:
             return ChatResult(content=str(exc), intent=ChatIntent.RUN_WORKFLOW)
-        if result is None:
-            return ChatResult(
-                content="GoalOS could not execute the workflow.",
-                intent=ChatIntent.RUN_WORKFLOW,
-            )
+        workflow_result = result.workflow
         return ChatResult(
-            content=self._format_workflow_result(result),
+            content=self._format_workflow_result(workflow_result),
             intent=ChatIntent.RUN_WORKFLOW,
-            workflow=result,
-            blocked=result.status == WorkflowStatus.FAILED.value,
+            workflow=workflow_result,
+            blocked=workflow_result.status == WorkflowStatus.FAILED.value,
         )
 
     def _create_goal_chain(self, message: str) -> WorkflowResponse:

@@ -202,6 +202,89 @@ class WorkflowService:
         workflow.progress_percentage = max(0, min(progress_percentage, 100))
         return self._to_response(self.repository.update(workflow, {"progress_percentage": workflow.progress_percentage}))
 
+    def pause(self, workflow_id: UUID) -> WorkflowResponse | None:
+        """Pause a workflow (only Pending/Running) and disable its schedule.
+
+        A scheduled workflow that is paused is removed from the due set
+        (``schedule_enabled=False``) but keeps its schedule definition so
+        :meth:`resume` can restore the same cadence.
+        """
+        workflow = self.repository.get(workflow_id)
+        if workflow is None:
+            return None
+        if workflow.status not in (WorkflowStatus.PENDING, WorkflowStatus.RUNNING):
+            raise ValueError(
+                "WORKFLOW_INVALID: only pending or running workflows can be paused "
+                f"(current status: {workflow.status.value})"
+            )
+        return self._to_response(
+            self.repository.update(
+                workflow,
+                {
+                    "status": WorkflowStatus.PAUSED,
+                    "schedule_enabled": False,
+                },
+            )
+        )
+
+    def resume(self, workflow_id: UUID) -> WorkflowResponse | None:
+        """Resume a paused workflow and its schedule.
+
+        A workflow that had begun running resumes as ``Running`` (its
+        persisted steps remain); a never-run workflow resumes as
+        ``Pending``. A paused schedule is re-enabled with a future next
+        run.
+        """
+        workflow = self.repository.get(workflow_id)
+        if workflow is None:
+            return None
+        if workflow.status is not WorkflowStatus.PAUSED:
+            raise ValueError(
+                "WORKFLOW_INVALID: only paused workflows can be resumed "
+                f"(current status: {workflow.status.value})"
+            )
+        updates: dict[str, Any] = {
+            "status": WorkflowStatus.RUNNING if workflow.steps else WorkflowStatus.PENDING,
+        }
+        if workflow.schedule:
+            from app.integrations.scheduler import _coerce_utc, next_run_at
+
+            now = datetime.now(timezone.utc)
+            updates["schedule_enabled"] = True
+            next_run = _coerce_utc(workflow.next_run_at)
+            if next_run is None or next_run <= now:
+                updates["next_run_at"] = next_run_at(workflow.schedule, now)
+        return self._to_response(self.repository.update(workflow, updates))
+
+    def cancel(self, workflow_id: UUID) -> WorkflowResponse | None:
+        """Cancel a workflow: terminal state, schedule disabled, runs stopped.
+
+        In-flight capability executions of the workflow are cancelled by
+        the caller via the execution runtime (``cancel_in_flight``) so no
+        orphaned execution can later claim success.
+        """
+        workflow = self.repository.get(workflow_id)
+        if workflow is None:
+            return None
+        if workflow.status is WorkflowStatus.CANCELLED:
+            return self._to_response(workflow)
+        if workflow.status is WorkflowStatus.COMPLETED:
+            raise ValueError(
+                "WORKFLOW_INVALID: completed workflows cannot be cancelled "
+                f"(current status: {workflow.status.value})"
+            )
+        return self._to_response(
+            self.repository.update(
+                workflow,
+                {
+                    "status": WorkflowStatus.CANCELLED,
+                    "completed_at": datetime.now(timezone.utc),
+                    "schedule_enabled": False,
+                    "next_run_at": None,
+                },
+            )
+        )
+
     def run_agent_workflow(
         self,
         workflow_id: UUID,
@@ -448,6 +531,70 @@ class WorkflowService:
                     "passed": False,
                     "summary": message,
                 },
+            },
+        )
+        return self._to_response(workflow)
+
+    def approve(
+        self,
+        workflow_id: UUID,
+        requirement: str,
+        capabilities: tuple[str, ...] | list[str] | None = None,
+        resolved_capabilities: list[str] | None = None,
+        capability_service: CapabilityService | None = None,
+    ) -> WorkflowResponse:
+        """Approve a workflow with its capability plan, without executing.
+
+        The approval is the hand-off from planning to execution: the
+        requirement and the resolved capability set are persisted on the
+        workflow so the execution runtime can pick it up later. The
+        workflow keeps its ``Pending`` status — execution is a separate,
+        explicit step (``ExecutionRuntimeService.run_workflow``).
+
+        Args:
+            workflow_id: The workflow to approve.
+            requirement: The business requirement driving the plan.
+            capabilities: Optional explicit execution capability set. When
+                omitted it is resolved through ``capability_service`` when
+                provided, else the deterministic keyword catalog.
+            resolved_capabilities: Registry capability names matched to
+                the goal, persisted for auditability.
+            capability_service: The capability engine used to resolve the
+                plan when ``capabilities`` is omitted.
+
+        Returns:
+            The approved workflow.
+
+        Raises:
+            ValueError: If the workflow does not exist or was already run.
+        """
+        workflow = self.repository.get(workflow_id)
+        if workflow is None:
+            raise ValueError(f"workflow not found: {workflow_id}")
+        if workflow.steps:
+            raise ValueError(f"workflow has already been run: {workflow_id}")
+
+        if capabilities is None:
+            if capability_service is not None:
+                resolution = capability_service.resolve_for_goal(requirement)
+                capabilities = tuple(resolution.execution_capabilities)
+                if resolved_capabilities is None:
+                    resolved_capabilities = list(resolution.capabilities)
+            else:
+                capabilities = resolve_capabilities(requirement)
+        if resolved_capabilities is None:
+            resolved_capabilities = list(capabilities)
+
+        workflow = self.repository.update(
+            workflow,
+            {
+                "requirement": requirement,
+                "resolved_capabilities": resolved_capabilities,
+                "steps": [],
+                "results": {},
+                "evaluation": None,
+                "error_message": None,
+                "progress_percentage": 5,
             },
         )
         return self._to_response(workflow)

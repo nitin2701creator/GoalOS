@@ -10,8 +10,13 @@ from app.llm.provider_factory import ProviderFactory
 from app.repositories.agent_repository import AgentRepository
 from app.repositories.capability_repository import CapabilityRepository
 from app.repositories.execution_repository import ExecutionRepository
+from app.repositories.runtime_execution_repository import RuntimeExecutionRepository
 from app.repositories.skill_repository import SkillRepository
 from app.repositories.workflow_repository import WorkflowRepository
+from app.schemas.runtime_execution import (
+    RuntimeWorkflowRunRequest,
+    RuntimeWorkflowRunResponse,
+)
 from app.schemas.workflow import (
     AgentWorkflowRunRequest,
     WorkflowCreateRequest,
@@ -20,6 +25,7 @@ from app.schemas.workflow import (
 )
 from app.services.agent_factory import AgentFactoryService
 from app.services.capability_service import CapabilityService
+from app.services.execution_runtime import ExecutionRuntimeService
 from app.services.workflow_service import WorkflowService
 
 router = APIRouter()
@@ -29,6 +35,20 @@ def _get_service(db=Depends(get_db)) -> WorkflowService:
     workflow_repo = WorkflowRepository(db)
     execution_repo = ExecutionRepository(db)
     return WorkflowService(workflow_repo, execution_repo)
+
+
+def _capability_service(db) -> CapabilityService:
+    """Compose the capability engine per request (existing conventions)."""
+    provider = None
+    try:
+        provider = ProviderFactory.create()
+    except ValueError:
+        provider = None
+    return CapabilityService(
+        CapabilityRepository(db),
+        integration_registry=build_default_registry(session=db),
+        llm_provider=provider,
+    )
 
 
 @router.get("", response_model=list[WorkflowResponse])
@@ -97,6 +117,83 @@ def fail_workflow(
     return result
 
 
+@router.post(
+    "/{workflow_id}/approve",
+    response_model=WorkflowResponse,
+    summary="Approve a workflow with its capability plan",
+    description=(
+        "Resolve the requirement into a capability plan and persist it on "
+        "the workflow (requirement, resolved capabilities) without "
+        "executing. The execution runtime accepts the approved workflow "
+        "via POST /{workflow_id}/run-runtime."
+    ),
+)
+def approve_workflow(
+    workflow_id: UUID,
+    request: AgentWorkflowRunRequest,
+    service: WorkflowService = Depends(_get_service),
+    db=Depends(get_db),
+):
+    """Approve a workflow with its resolved capability plan."""
+    try:
+        result = service.approve(
+            workflow_id,
+            request.requirement,
+            capability_service=_capability_service(db),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return result
+
+
+@router.post(
+    "/{workflow_id}/run-runtime",
+    response_model=RuntimeWorkflowRunResponse,
+    summary="Run an approved workflow through the execution runtime",
+    description=(
+        "Accept an approved workflow from the workflow service, execute "
+        "each capability step through the execution runtime (registry "
+        "resolution, permission checks, provider dispatch), persist every "
+        "step as a runtime execution, and update the workflow with the "
+        "step results and evaluation. Unavailable integrations are "
+        "reported honestly as INTEGRATION_NOT_CONFIGURED — never faked."
+    ),
+)
+def run_workflow_runtime(
+    workflow_id: UUID,
+    request: RuntimeWorkflowRunRequest,
+    service: WorkflowService = Depends(_get_service),
+    db=Depends(get_db),
+):
+    """Run an approved workflow through the execution runtime."""
+    agent_factory = AgentFactoryService(
+        AgentRepository(db),
+        SkillRepository(db),
+    )
+    capability_service = _capability_service(db)
+    runtime = ExecutionRuntimeService(
+        RuntimeExecutionRepository(db),
+        capability_service,
+        workflow_repository=WorkflowRepository(db),
+    )
+    try:
+        result = runtime.run_workflow(
+            workflow_id,
+            requirement=request.requirement,
+            capabilities=request.capabilities,
+            permissions=set(request.permissions) if request.permissions is not None else None,
+            agent_name=request.agent_name,
+            agent_factory=agent_factory,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return result
+
+
 @router.post("/{workflow_id}/run-agent", response_model=WorkflowResponse)
 def run_agent_workflow(
     workflow_id: UUID,
@@ -143,6 +240,97 @@ def run_agent_workflow(
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
     return result
+
+
+@router.post("/{workflow_id}/pause", response_model=WorkflowResponse)
+def pause_workflow(
+    workflow_id: UUID,
+    service: WorkflowService = Depends(_get_service),
+):
+    """Pause a workflow and disable its schedule."""
+    try:
+        result = service.pause(workflow_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+    return result
+
+
+@router.post("/{workflow_id}/resume", response_model=WorkflowResponse)
+def resume_workflow(
+    workflow_id: UUID,
+    service: WorkflowService = Depends(_get_service),
+):
+    """Resume a paused workflow and re-enable its schedule."""
+    try:
+        result = service.resume(workflow_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+    return result
+
+
+@router.post("/{workflow_id}/cancel", response_model=WorkflowResponse)
+def cancel_workflow(
+    workflow_id: UUID,
+    service: WorkflowService = Depends(_get_service),
+    db=Depends(get_db),
+):
+    """Cancel a workflow: terminal state, schedule disabled, in-flight
+    capability executions cancelled (persisted as cancelled)."""
+    try:
+        result = service.cancel(workflow_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+    runtime = ExecutionRuntimeService(
+        RuntimeExecutionRepository(db),
+        _capability_service(db),
+        workflow_repository=WorkflowRepository(db),
+    )
+    runtime.cancel_in_flight(workflow_id)
+    return result
+
+
+@router.post(
+    "/{workflow_id}/retry",
+    response_model=RuntimeWorkflowRunResponse,
+    summary="Retry a failed workflow as a fresh run instance",
+    description=(
+        "Clone a failed workflow into a new run instance (history retained) "
+        "and execute it through the execution runtime with the same "
+        "requirement/capability plan and permission gates."
+    ),
+)
+def retry_workflow(
+    workflow_id: UUID,
+    db=Depends(get_db),
+):
+    """Retry a failed workflow through the execution runtime."""
+    agent_factory = AgentFactoryService(
+        AgentRepository(db),
+        SkillRepository(db),
+    )
+    runtime = ExecutionRuntimeService(
+        RuntimeExecutionRepository(db),
+        _capability_service(db),
+        workflow_repository=WorkflowRepository(db),
+    )
+    try:
+        return runtime.retry_workflow(workflow_id, agent_factory=agent_factory)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
 
 @router.post("/{workflow_id}/progress", response_model=WorkflowResponse)

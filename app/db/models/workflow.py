@@ -27,6 +27,7 @@ class WorkflowStatus(str, Enum):
     PAUSED = "Paused"
     FAILED = "Failed"
     COMPLETED = "Completed"
+    CANCELLED = "Cancelled"
 
 
 class Workflow(Base):
@@ -61,6 +62,11 @@ class Workflow(Base):
     schedule_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Run-instance link: when this workflow is a scheduled/retried run
+    #: instance, points at the workflow it was cloned from (the template).
+    scheduled_from_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

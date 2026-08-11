@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, ClassVar
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.agents.permissions import Permission
@@ -24,6 +24,13 @@ from app.integrations.exceptions import CapabilityUnavailableError
 from app.integrations.integration_connector import IntegrationConnector
 
 _SUPPORTED_SCHEDULES = {"hourly", "daily", "weekly"}
+
+
+def _coerce_utc(value: datetime | None) -> datetime | None:
+    """Attach UTC to a naive datetime (SQLite returns naive datetimes)."""
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=timezone.utc)
 
 
 def _parse_datetime(value: str | datetime | None) -> datetime | None:
@@ -148,6 +155,72 @@ class SchedulerConnector(IntegrationConnector):
         workflow.next_run_at = None
         self.db.commit()
         return {"workflow_id": str(workflow.id), "cancelled": True}
+
+    def disable(self, workflow_id: uuid.UUID) -> dict[str, Any]:
+        """Pause a scheduled workflow, keeping its schedule definition.
+
+        Unlike :meth:`cancel`, the schedule string and next run time are
+        preserved so :meth:`enable` can resume the same cadence.
+        """
+        if self.db is None:
+            raise CapabilityUnavailableError("scheduler has no database session")
+        from app.db.models.workflow import Workflow
+
+        workflow = self.db.get(Workflow, workflow_id)
+        if workflow is None:
+            raise ValueError(f"workflow not found: {workflow_id}")
+        workflow.schedule_enabled = False
+        self.db.commit()
+        self.db.refresh(workflow)
+        return self._row(workflow)
+
+    def enable(self, workflow_id: uuid.UUID, now: datetime | None = None) -> dict[str, Any]:
+        """Resume a paused schedule, recomputing a future next run when needed."""
+        if self.db is None:
+            raise CapabilityUnavailableError("scheduler has no database session")
+        from app.db.models.workflow import Workflow
+
+        workflow = self.db.get(Workflow, workflow_id)
+        if workflow is None:
+            raise ValueError(f"workflow not found: {workflow_id}")
+        if not workflow.schedule:
+            raise ValueError(f"workflow has no schedule to enable: {workflow_id}")
+        now = now or datetime.now(timezone.utc)
+        next_run = _coerce_utc(workflow.next_run_at)
+        if next_run is None or next_run <= now:
+            workflow.next_run_at = next_run_at(workflow.schedule, now)
+        workflow.schedule_enabled = True
+        self.db.commit()
+        self.db.refresh(workflow)
+        return self._row(workflow)
+
+    def claim(self, workflow_id: uuid.UUID, now: datetime | None = None, horizon: timedelta | None = None) -> bool:
+        """Atomically claim a due run so only one worker executes it.
+
+        Compare-and-set on ``next_run_at``: the worker whose UPDATE matches
+        (enabled + due) moves ``next_run_at`` to the claim horizon and wins
+        the run. Other workers/processes see a non-due workflow and skip it
+        — no duplicate scheduler loops can double-execute.
+        """
+        if self.db is None:
+            return False
+        from app.db.models.workflow import Workflow
+
+        now = now or datetime.now(timezone.utc)
+        claimed_until = now + (horizon or timedelta(minutes=15))
+        result = self.db.execute(
+            update(Workflow)
+            .where(
+                Workflow.id == workflow_id,
+                Workflow.schedule_enabled.is_(True),
+                Workflow.next_run_at.is_not(None),
+                Workflow.next_run_at <= now,
+            )
+            .values(next_run_at=claimed_until)
+            .execution_options(synchronize_session=False)
+        )
+        self.db.commit()
+        return result.rowcount == 1
 
     def due_runs(self, now: datetime | None = None) -> list[dict[str, Any]]:
         """Return scheduled workflows whose next run time has arrived."""

@@ -20,6 +20,12 @@ services:
       GOALOS_OPENWEBUI_API_KEY: "${GOALOS_OPENWEBUI_API_KEY:?set this in .env}"
       # OpenWebUI origin (for CORS) — use the public/KVM URL, not localhost.
       OPENWEBUI_BASE_URL: "${OPENWEBUI_BASE_URL:-http://localhost:3000}"
+      # Persisted scheduler: runs due schedules in-process through the
+      # execution runtime. Due runs are claimed atomically in the DB, so
+      # multiple workers/restarts never double-execute.
+      GOALOS_SCHEDULER_ENABLED: "${GOALOS_SCHEDULER_ENABLED:-1}"
+      GOALOS_SCHEDULER_INTERVAL: "${GOALOS_SCHEDULER_INTERVAL:-30}"
+      GOALOS_SCHEDULER_CLAIM_HORIZON: "${GOALOS_SCHEDULER_CLAIM_HORIZON:-900}"
       # LLM gateway configuration (FreeLLMAPI on the same Docker network).
       LLM_PROVIDER: "${LLM_PROVIDER:-openai_compatible}"
       LLM_API_BASE_URL: "${LLM_API_BASE_URL:-http://freellmapi:8000/v1/chat/completions}"
@@ -39,6 +45,12 @@ services:
       GOALOS_GA4_PRIVATE_KEY: "${GOALOS_GA4_PRIVATE_KEY:-}"
       GOALOS_META_ACCESS_TOKEN: "${GOALOS_META_ACCESS_TOKEN:-}"
       GOALOS_META_AD_ACCOUNT_ID: "${GOALOS_META_AD_ACCOUNT_ID:-}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   # FreeLLMAPI LLM gateway (adjust image/env to your gateway). Comment out
