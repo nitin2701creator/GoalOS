@@ -62,24 +62,83 @@ class FreeLLMClient:
         }
         return self._request_with_retries(payload)
 
-    def _request_with_retries(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        **parameters: Any,
+    ) -> dict[str, Any]:
+        """Send an OpenAI-compatible chat completion request.
+
+        The request is posted to the standard ``/v1/chat/completions``
+        endpoint (or ``LLM_CHAT_PATH`` when configured), so the gateway
+        can be pointed at any OpenAI-compatible provider without
+        rewriting GoalOS.
+
+        Args:
+            messages: Conversation messages as ``{role, content}`` dicts.
+            model: Optional model override.
+            temperature: Optional sampling temperature.
+            max_tokens: Optional completion token cap.
+            **parameters: Additional provider request parameters.
+
+        Raises:
+            LLMError: If communication or response processing fails.
+        """
+
+        if not messages:
+            raise LLMResponseError("Messages must not be empty")
+
+        payload: dict[str, Any] = {
+            "model": model or self.config.default_model,
+            "messages": messages,
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        payload.update(parameters)
+        return self._request_with_retries(payload, url=self.chat_url)
+
+    @property
+    def chat_url(self) -> str:
+        """Full URL for OpenAI-compatible chat completions.
+
+        If the configured base URL already names a ``chat/completions``
+        endpoint it is used verbatim; otherwise the standard
+        ``/v1/chat/completions`` path (``LLM_CHAT_PATH``) is appended.
+        """
+        base = self.config.base_url.rstrip("/")
+        if base.endswith("/chat/completions"):
+            return base
+        path = self.config.chat_path.lstrip("/")
+        return f"{base}/{path}"
+
+    def _request_with_retries(
+        self, payload: Mapping[str, Any], *, url: str | None = None
+    ) -> dict[str, Any]:
         """Send a request, retrying transient connection failures."""
 
         attempts = self.config.max_retries + 1
         last_error: LLMError | None = None
         for _ in range(attempts):
             try:
-                return self._send_request(payload)
+                return self._send_request(payload, url=url)
             except (LLMTimeoutError, LLMConnectionError) as error:
                 last_error = error
         assert last_error is not None
         raise last_error
 
-    def _send_request(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def _send_request(
+        self, payload: Mapping[str, Any], *, url: str | None = None
+    ) -> dict[str, Any]:
         """Perform one HTTP request and decode its JSON response."""
 
         request = Request(
-            self.config.base_url,
+            url or self.config.base_url,
             data=json.dumps(payload).encode("utf-8"),
             headers=self._headers(),
             method="POST",
@@ -91,7 +150,7 @@ class FreeLLMClient:
             if error.code in {401, 403}:
                 raise LLMAuthenticationError("Language-model authentication failed") from error
             raise LLMResponseError(f"Language-model service returned HTTP {error.code}") from error
-        except (socket.timeout, TimeoutError) as error:
+        except TimeoutError as error:
             raise LLMTimeoutError("Language-model request timed out") from error
         except URLError as error:
             if isinstance(error.reason, socket.timeout):

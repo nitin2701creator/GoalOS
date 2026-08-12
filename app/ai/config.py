@@ -22,6 +22,7 @@ class LLMConfig:
     timeout: float = 30.0
     default_model: str = "free-llm-small"
     max_retries: int = 3
+    chat_path: str = "/v1/chat/completions"
 
     @classmethod
     def from_env(cls) -> LLMConfig:
@@ -31,12 +32,14 @@ class LLMConfig:
             ValueError: If a numeric setting is invalid or negative.
         """
 
+        fields = cls.__dataclass_fields__
         return cls(
             base_url=_environment_value(
+                "LLM_BASE_URL",
                 "LLM_API_BASE_URL",
                 "FREELLM_BASE_URL",
                 "FREELLMAPI_BASE_URL",
-                default=cls.base_url,
+                default=fields["base_url"].default,
             ),
             api_key=_environment_value(
                 "LLM_API_KEY", "FREELLM_API_KEY", "FREELLMAPI_API_KEY", default=None
@@ -46,12 +49,19 @@ class LLMConfig:
                 "timeout",
             ),
             default_model=_environment_value(
-                "LLM_MODEL", "FREELLM_DEFAULT_MODEL", "DEFAULT_MODEL", default=cls.default_model
+                "LLM_MODEL",
+                "FREELLM_DEFAULT_MODEL",
+                "DEFAULT_MODEL",
+                default=fields["default_model"].default,
             ),
             max_retries=_non_negative_int(
                 _environment_value("FREELLM_MAX_RETRIES", "LLM_MAX_RETRIES", default="3"),
                 "max_retries",
             ),
+            chat_path=_environment_value(
+                "LLM_CHAT_PATH", default=fields["chat_path"].default
+            )
+            or fields["chat_path"].default,
         )
 
 

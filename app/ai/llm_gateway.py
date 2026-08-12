@@ -2,10 +2,26 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.ai.exceptions import LLMResponseError
 from app.ai.free_llm_client import FreeLLMClient
+
+
+@dataclass(frozen=True, slots=True)
+class LLMChatResult:
+    """Structured outcome of an OpenAI-compatible chat request.
+
+    Attributes:
+        text: The assistant message content.
+        model: The model that produced the response.
+        usage: Token usage reported by the provider (may be empty).
+    """
+
+    text: str
+    model: str
+    usage: dict[str, Any] = field(default_factory=dict)
 
 
 class LLMGateway:
@@ -30,6 +46,48 @@ class LLMGateway:
         """Compatibility alias for :meth:`generate`."""
 
         return self.generate(prompt, model=model, **parameters)
+
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        **parameters: Any,
+    ) -> LLMChatResult:
+        """Send an OpenAI-compatible chat request and return a structured result.
+
+        Args:
+            messages: Conversation messages as ``{role, content}`` dicts.
+            model: Optional model override.
+            temperature: Optional sampling temperature.
+            max_tokens: Optional completion token cap.
+            **parameters: Additional provider request parameters.
+
+        Raises:
+            LLMError: If communication or response processing fails.
+        """
+
+        response = self._client.chat(
+            messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **parameters,
+        )
+        text = self._response_text(response)
+        resolved_model = response.get("model") or model or self._client.config.default_model
+        usage = response.get("usage")
+        if not isinstance(usage, dict):
+            usage = {}
+        return LLMChatResult(text=text, model=resolved_model, usage=usage)
+
+    @staticmethod
+    def extract_text(response: dict[str, Any]) -> str:
+        """Public alias for :meth:`_response_text`."""
+
+        return LLMGateway._response_text(response)
 
     @staticmethod
     def _response_text(response: dict[str, Any]) -> str:

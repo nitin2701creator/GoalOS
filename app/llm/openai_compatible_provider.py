@@ -4,9 +4,10 @@ This provider adapts the existing GoalOS language-model stack — the
 environment-driven :class:`LLMConfig`, the retrying HTTP
 :class:`FreeLLMClient`, and the :class:`LLMGateway` text extraction — to
 the :class:`BaseProvider` contract. It introduces no new API-key
-mechanism: base URL, key, and model come from the same ``FREELLM_*``
-environment variables the rest of GoalOS uses, and the endpoint is any
-OpenAI-compatible completion service.
+mechanism: base URL, key, and model come from the same environment
+configuration the rest of GoalOS uses (``LLM_BASE_URL``, ``LLM_API_KEY``,
+``LLM_MODEL``, with legacy ``FREELLM_*`` names still honoured), and the
+endpoint is any OpenAI-compatible completion service.
 """
 
 from __future__ import annotations

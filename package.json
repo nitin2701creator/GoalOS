@@ -5,8 +5,8 @@
   "description": "GoalOS — AI Operating System for Business Automation (documentation repo)",
   "type": "module",
   "scripts": {
-    "dev": "serve -l tcp://0.0.0.0:${PORT:-8080} .",
-    "start": "serve -l tcp://0.0.0.0:${PORT:-8080} .",
+    "dev": "sh -c '.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'",
+    "start": "sh -c '.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'",
     "build": "sh -c 'rm -rf dist && mkdir -p dist && cp -r agents app development docs workflows readme.md hello_codex.txt dist/'"
   },
   "dependencies": {
