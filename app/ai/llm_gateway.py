@@ -106,6 +106,17 @@ class LLMGateway:
                 if isinstance(text, str):
                     return text
                 message = first_choice.get("message")
-                if isinstance(message, dict) and isinstance(message.get("content"), str):
-                    return message["content"]
+                if isinstance(message, dict):
+                    content = message.get("content")
+                    if isinstance(content, str):
+                        return content
+                    if isinstance(content, list):
+                        text = "".join(
+                            part.get("text", "")
+                            for part in content
+                            if isinstance(part, dict)
+                            and isinstance(part.get("text"), str)
+                        )
+                        if text:
+                            return text
         raise LLMResponseError("Language-model response does not contain text")

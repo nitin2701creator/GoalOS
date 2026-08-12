@@ -153,6 +153,15 @@ def test_chat_url_respects_full_endpoint_and_custom_path() -> None:
     assert custom.chat_url == "http://llm.test/v1/completions"
 
 
+def test_chat_url_does_not_duplicate_v1_segment() -> None:
+    """A base URL ending in /v1 must not produce /v1/v1/chat/completions."""
+    client = FreeLLMClient(LLMConfig(base_url="http://llm.test/v1"))
+    assert client.chat_url == "http://llm.test/v1/chat/completions"
+
+    trailing = FreeLLMClient(LLMConfig(base_url="http://llm.test/v1/"))
+    assert trailing.chat_url == "http://llm.test/v1/chat/completions"
+
+
 # ---------------------------------------------------------------------------
 # Successful chat requests
 # ---------------------------------------------------------------------------
@@ -204,6 +213,53 @@ def test_ai_chat_uses_default_model_when_omitted(api) -> None:
     assert response.status_code == 200
     _, data = opener.requests[0]
     assert json.loads(data)["model"] == "free-llm-small"
+
+
+def test_ai_chat_production_v1_base_url_and_model(api, monkeypatch: pytest.MonkeyPatch) -> None:
+    """LLM_BASE_URL ending in /v1 + LLM_MODEL hit /v1/chat/completions once.
+
+    Replicates the production FreeLLMAPI configuration
+    (``LLM_BASE_URL=http://127.0.0.1:3001/v1``, ``LLM_MODEL=openai-fast``)
+    so the historical double-``/v1`` regression stays covered.
+    """
+    monkeypatch.setenv("LLM_BASE_URL", "http://llm.test/v1")
+    monkeypatch.setenv("LLM_API_KEY", API_KEY)
+    monkeypatch.setenv("LLM_MODEL", "openai-fast")
+    opener = ChatOpener(response=_openai_payload(content="Hello from openai-fast"))
+    config = LLMConfig.from_env()
+    app.dependency_overrides[ai_module._get_gateway] = lambda: LLMGateway(
+        FreeLLMClient(config, opener=opener)
+    )
+
+    response = api.post(
+        "/api/v1/ai/chat", json={"messages": [{"role": "user", "content": "Hi"}]}
+    )
+
+    assert response.status_code == 200
+    assert (
+        response.json()["choices"][0]["message"]["content"]
+        == "Hello from openai-fast"
+    )
+    url, data = opener.requests[0]
+    assert url == "http://llm.test/v1/chat/completions"
+    assert json.loads(data)["model"] == "openai-fast"
+
+
+def test_ai_chat_parses_content_parts_response(api) -> None:
+    """message.content as a list of text parts is parsed (OpenAI multimodal)."""
+    payload = _openai_payload()
+    payload["choices"][0]["message"]["content"] = [
+        {"type": "text", "text": "Part one. "},
+        {"type": "text", "text": "Part two."},
+        {"type": "image_url", "image_url": {"url": "https://example.test/x.png"}},
+    ]
+    opener = ChatOpener(response=payload)
+    _install_gateway(opener)
+
+    response = api.post("/api/v1/ai/chat", json={"messages": [{"role": "user", "content": "Hi"}]})
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "Part one. Part two."
 
 
 # ---------------------------------------------------------------------------

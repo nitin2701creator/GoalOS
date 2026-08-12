@@ -107,14 +107,19 @@ class FreeLLMClient:
     def chat_url(self) -> str:
         """Full URL for OpenAI-compatible chat completions.
 
-        If the configured base URL already names a ``chat/completions``
-        endpoint it is used verbatim; otherwise the standard
-        ``/v1/chat/completions`` path (``LLM_CHAT_PATH``) is appended.
+        Accepts a base URL that already names the endpoint
+        (``.../chat/completions``), a versioned API root (``.../v1``, the
+        form FreeLLMAPI documents), or a bare origin. ``LLM_CHAT_PATH``
+        (default ``/v1/chat/completions``) supplies the missing path, and a
+        ``v1`` segment is never duplicated when the base URL already ends
+        with one.
         """
         base = self.config.base_url.rstrip("/")
         if base.endswith("/chat/completions"):
             return base
-        path = self.config.chat_path.lstrip("/")
+        path = self.config.chat_path.strip("/")
+        if base.endswith("/v1") and path.startswith("v1/"):
+            path = path[len("v1/"):]
         return f"{base}/{path}"
 
     def _request_with_retries(
