@@ -12,6 +12,7 @@ from app.integrations.exceptions import (
     ConnectorError,
     ConnectorUnavailableError,
     PermissionDeniedError,
+    RateLimitError,
 )
 from app.integrations.factory import SUPPORTED_INTEGRATIONS, build_default_registry
 from app.integrations.google_analytics import GoogleAnalyticsConnector
@@ -26,6 +27,8 @@ from app.integrations.http_client import (
 from app.integrations.integration_connector import IntegrationConnector
 from app.integrations.meta_ads import MetaAdsConnector
 from app.integrations.scheduler import SchedulerConnector
+from app.integrations.social import SocialConnector
+from app.integrations.twenty import TwentyConnector
 from app.integrations.web import WebConnector
 from app.integrations.website import WebsiteConnector
 from app.integrations.woocommerce import WooCommerceConnector
@@ -53,7 +56,10 @@ __all__ = [
     "IntegrationConnector",
     "MetaAdsConnector",
     "PermissionDeniedError",
+    "RateLimitError",
     "SchedulerConnector",
+    "SocialConnector",
+    "TwentyConnector",
     "WebConnector",
     "WebsiteConnector",
     "WooCommerceConnector",

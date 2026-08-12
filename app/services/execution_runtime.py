@@ -18,6 +18,9 @@ Honesty contract:
   ``INTEGRATION_NOT_CONFIGURED``) — never a fabricated success.
 - Insufficient permissions persist as ``failed`` with
   ``PERMISSION_DENIED``.
+- Publishing/external-write capabilities executed outside an approved
+  workflow persist as ``blocked`` with ``APPROVAL_REQUIRED`` — they never
+  run silently.
 - Unknown capabilities persist as ``failed`` with ``CAPABILITY_NOT_FOUND``.
 - Invalid workflows are refused with ``WORKFLOW_INVALID``.
 - A crashing executor persists ``EXECUTION_FAILED``.
@@ -75,6 +78,7 @@ class RuntimeErrorCode:
     CAPABILITY_NOT_FOUND = "CAPABILITY_NOT_FOUND"
     WORKFLOW_INVALID = "WORKFLOW_INVALID"
     EXECUTION_FAILED = "EXECUTION_FAILED"
+    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
     DISABLED = "DISABLED"
     CANCELLED = "CANCELLED"
 
@@ -352,6 +356,17 @@ class ExecutionRuntimeService:
                 None,
                 resolution.reason or "INTEGRATION_NOT_CONFIGURED",
                 code=RuntimeErrorCode.INTEGRATION_NOT_CONFIGURED,
+            )
+        if resolution.requires_approval and not self._approved_context(workflow_id):
+            return self._finish(
+                execution,
+                None,
+                (
+                    f"APPROVAL_REQUIRED: capability '{capability}' changes external "
+                    "state and must be executed through an approved workflow"
+                ),
+                code=RuntimeErrorCode.APPROVAL_REQUIRED,
+                status=RuntimeExecutionStatus.BLOCKED,
             )
 
         execution = self.repository.update(
@@ -854,9 +869,28 @@ class ExecutionRuntimeService:
         )
         return self._to_response(execution)
 
+    def _approved_context(self, workflow_id: UUID | None) -> bool:
+        """Return whether execution runs inside an approved workflow context.
+
+        Publishing/external-write capabilities are gated on approval: they
+        may only execute under a workflow whose requirement has been
+        approved (the same marker :meth:`run_workflow` requires). When the
+        approval cannot be verified the gate fails closed.
+        """
+        if workflow_id is None:
+            return False
+        if self.workflow_repository is None:
+            return False
+        workflow = self.workflow_repository.get(workflow_id)
+        if workflow is None:
+            return False
+        return bool(workflow.requirement)
+
     @staticmethod
     def _derive_code(error: str) -> str:
         """Derive a stable error code from a human-readable error."""
+        if "APPROVAL_REQUIRED" in error:
+            return RuntimeErrorCode.APPROVAL_REQUIRED
         if "INTEGRATION_NOT_CONFIGURED" in error:
             return RuntimeErrorCode.INTEGRATION_NOT_CONFIGURED
         if "missing required permissions" in error or "requires permission" in error:

@@ -17,6 +17,8 @@ from app.integrations.google_analytics import GoogleAnalyticsConnector
 from app.integrations.http_client import HttpClient
 from app.integrations.meta_ads import MetaAdsConnector
 from app.integrations.scheduler import SchedulerConnector
+from app.integrations.social import SocialConnector
+from app.integrations.twenty import TwentyConnector
 from app.integrations.web import DuckDuckGoSearchProvider, WebConnector
 from app.integrations.website import WebsiteConnector
 from app.integrations.woocommerce import WooCommerceConnector
@@ -30,6 +32,8 @@ SUPPORTED_INTEGRATIONS: tuple[str, ...] = (
     "google_analytics",
     "meta_ads",
     "scheduler",
+    "twenty",
+    "social",
 )
 
 #: Capability-prefix → registry-name aliases. Connector capability names
@@ -82,6 +86,8 @@ def build_default_registry(
     registry.register(MetaAdsConnector(client=client or HttpClient()))
     registry.register(GmailProvider(service=_default_gmail_service(client)))
     registry.register(SchedulerConnector(db=session))
+    registry.register(TwentyConnector(client=client or HttpClient()))
+    registry.register(SocialConnector())
     return registry
 
 

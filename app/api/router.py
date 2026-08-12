@@ -11,6 +11,7 @@ from app.api.v1 import planning as planning_router
 from app.api.v1 import projects as projects_router
 from app.api.v1 import schedules as schedules_router
 from app.api.v1 import tasks as tasks_router
+from app.api.v1 import webhooks as webhooks_router
 from app.api.v1 import workflows as workflows_router
 
 api_router = APIRouter()
@@ -42,3 +43,4 @@ api_router.include_router(development_router.router, prefix="/v1/development", t
 api_router.include_router(agents_router.router, prefix="/v1/agents", tags=["agents"])
 api_router.include_router(capabilities_router.router, prefix="/v1/capabilities", tags=["capabilities"])
 api_router.include_router(integrations_router.router, prefix="/v1/integrations", tags=["integrations"])
+api_router.include_router(webhooks_router.router, prefix="/v1", tags=["webhooks"])

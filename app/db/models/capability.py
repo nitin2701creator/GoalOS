@@ -57,6 +57,9 @@ class Capability(Base):
     execution_capability: Mapped[str | None] = mapped_column(String(200), nullable=True)
     keywords: Mapped[list[Any]] = mapped_column(JSON, default=list, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    requires_approval: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

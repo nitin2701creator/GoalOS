@@ -62,6 +62,8 @@ class CapabilityDefinition(BaseModel):
             capabilities).
         keywords: Deterministic match keywords for goal resolution.
         enabled: Whether the capability may be resolved/executed.
+        requires_approval: Whether execution requires an approved workflow
+            context (publishing/external writes must never run silently).
     """
 
     model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
@@ -79,6 +81,7 @@ class CapabilityDefinition(BaseModel):
     execution_capability: str | None = None
     keywords: tuple[str, ...] = ()
     enabled: bool = True
+    requires_approval: bool = False
 
 
 def _skill_definition(name: str) -> CapabilityDefinition:
@@ -148,6 +151,7 @@ def _integration_definition(
     permissions: tuple[Permission, ...],
     execution_capability: str | None,
     keywords: tuple[str, ...],
+    requires_approval: bool = False,
 ) -> CapabilityDefinition:
     """Build an integration-backed capability definition."""
     return CapabilityDefinition(
@@ -160,6 +164,7 @@ def _integration_definition(
         implementation=implementation,
         execution_capability=execution_capability,
         keywords=keywords,
+        requires_approval=requires_approval,
     )
 
 
@@ -362,5 +367,243 @@ BUILTIN_CAPABILITIES.update(
             ("memory", "recall", "retrieve", "remember"),
             provider="memory",
         ),
+    }
+)
+
+#: Twenty CRM capabilities (integration-backed through TwentyConnector).
+#: Reads require READ_CRM; creates/updates require WRITE_CRM (dangerous,
+#: never implicit) and additionally require an approved workflow context.
+_TWENTY_CAPABILITIES: dict[str, CapabilityDefinition] = {
+    "twenty_search_people": _integration_definition(
+        name="twenty_search_people",
+        description="Search Twenty CRM people records by query/filter.",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.search_people",
+        permissions=(Permission.READ_CRM,),
+        execution_capability=None,
+        keywords=("twenty", "crm", "people", "contacts", "find person", "search person"),
+    ),
+    "twenty_create_person": _integration_definition(
+        name="twenty_create_person",
+        description="Create a Twenty CRM person record (requires WRITE_CRM + approval).",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.create_person",
+        permissions=(Permission.WRITE_CRM,),
+        execution_capability=None,
+        keywords=("create person", "add contact", "new contact", "create contact"),
+        requires_approval=True,
+    ),
+    "twenty_update_person": _integration_definition(
+        name="twenty_update_person",
+        description="Update a Twenty CRM person record (requires WRITE_CRM + approval).",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.update_person",
+        permissions=(Permission.WRITE_CRM,),
+        execution_capability=None,
+        keywords=("update person", "edit contact", "update contact"),
+        requires_approval=True,
+    ),
+    "twenty_search_companies": _integration_definition(
+        name="twenty_search_companies",
+        description="Search Twenty CRM company records by query/filter.",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.search_companies",
+        permissions=(Permission.READ_CRM,),
+        execution_capability=None,
+        keywords=("search companies", "companies", "accounts", "crm companies"),
+    ),
+    "twenty_create_company": _integration_definition(
+        name="twenty_create_company",
+        description="Create a Twenty CRM company record (requires WRITE_CRM + approval).",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.create_company",
+        permissions=(Permission.WRITE_CRM,),
+        execution_capability=None,
+        keywords=("create company", "add company", "new company"),
+        requires_approval=True,
+    ),
+    "twenty_update_company": _integration_definition(
+        name="twenty_update_company",
+        description="Update a Twenty CRM company record (requires WRITE_CRM + approval).",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.update_company",
+        permissions=(Permission.WRITE_CRM,),
+        execution_capability=None,
+        keywords=("update company", "edit company", "update account"),
+        requires_approval=True,
+    ),
+    "twenty_search_opportunities": _integration_definition(
+        name="twenty_search_opportunities",
+        description="Search Twenty CRM opportunities/deals by query/filter.",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.search_opportunities",
+        permissions=(Permission.READ_CRM,),
+        execution_capability=None,
+        keywords=("opportunities", "deals", "pipeline", "search deals"),
+    ),
+    "twenty_create_opportunity": _integration_definition(
+        name="twenty_create_opportunity",
+        description="Create a Twenty CRM opportunity (requires WRITE_CRM + approval).",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.create_opportunity",
+        permissions=(Permission.WRITE_CRM,),
+        execution_capability=None,
+        keywords=("create opportunity", "add deal", "new opportunity"),
+        requires_approval=True,
+    ),
+    "twenty_update_opportunity": _integration_definition(
+        name="twenty_update_opportunity",
+        description="Update a Twenty CRM opportunity (requires WRITE_CRM + approval).",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.update_opportunity",
+        permissions=(Permission.WRITE_CRM,),
+        execution_capability=None,
+        keywords=("update opportunity", "update deal", "move deal"),
+        requires_approval=True,
+    ),
+    "twenty_create_task": _integration_definition(
+        name="twenty_create_task",
+        description="Create a Twenty CRM task (requires WRITE_CRM + approval).",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.create_task",
+        permissions=(Permission.WRITE_CRM,),
+        execution_capability=None,
+        keywords=("create task", "add task", "new task", "log task"),
+        requires_approval=True,
+    ),
+    "twenty_update_task": _integration_definition(
+        name="twenty_update_task",
+        description="Update a Twenty CRM task (requires WRITE_CRM + approval).",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.update_task",
+        permissions=(Permission.WRITE_CRM,),
+        execution_capability=None,
+        keywords=("update task", "complete task", "mark task done"),
+        requires_approval=True,
+    ),
+    "twenty_create_note": _integration_definition(
+        name="twenty_create_note",
+        description="Create a Twenty CRM note (requires WRITE_CRM + approval).",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.create_note",
+        permissions=(Permission.WRITE_CRM,),
+        execution_capability=None,
+        keywords=("create note", "add note", "log note"),
+        requires_approval=True,
+    ),
+    "twenty_get_record": _integration_definition(
+        name="twenty_get_record",
+        description="Fetch a single Twenty CRM record by object slug + id.",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.get_record",
+        permissions=(Permission.READ_CRM,),
+        execution_capability=None,
+        keywords=("get record", "fetch record", "record by id", "read record"),
+    ),
+}
+BUILTIN_CAPABILITIES.update(_TWENTY_CAPABILITIES)
+
+#: Social media capabilities (contract-only until a provider is wired).
+#: Every capability is registered so resolution finds it; availability is
+#: honestly Not Configured. Create/publish actions additionally require
+#: PUBLISH_SOCIAL and an approved workflow context.
+def _social_definition(
+    name: str,
+    description: str,
+    provider: str,
+    action: str,
+    keywords: tuple[str, ...],
+    *,
+    requires_approval: bool = False,
+) -> CapabilityDefinition:
+    read_only = action in ("get_post", "get_insights", "get_analytics")
+    return _integration_definition(
+        name=name,
+        description=description,
+        category="social",
+        provider="social",
+        implementation=f"social.{provider}.{action}",
+        permissions=(Permission.READ_SOCIAL if read_only else Permission.PUBLISH_SOCIAL,),
+        execution_capability=None,
+        keywords=keywords,
+        requires_approval=requires_approval,
+    )
+
+
+def _social_definitions(
+    provider: str,
+    display_name: str,
+) -> dict[str, CapabilityDefinition]:
+    """Return the four standard capabilities for one social provider."""
+    short = provider
+    keywords = {
+        "meta": {
+            "create_post": ("draft instagram post", "draft facebook post", "draft meta post"),
+            "publish_post": ("post to instagram", "post on facebook", "publish to facebook", "publish to instagram"),
+            "get_post": ("get instagram post", "get facebook post", "get meta post"),
+            "get_insights": ("instagram insights", "facebook insights", "meta insights", "social insights"),
+        },
+        "linkedin": {
+            "create_post": ("draft linkedin post", "draft linkedin update"),
+            "publish_post": ("post to linkedin", "publish linkedin", "linkedin post"),
+            "get_post": ("get linkedin post",),
+            "get_analytics": ("linkedin analytics", "linkedin impressions", "linkedin engagement"),
+        },
+        "x": {
+            "create_post": ("draft x post", "draft tweet", "draft twitter post"),
+            "publish_post": ("post to x", "tweet", "publish tweet", "publish to x"),
+            "get_post": ("get tweet", "get x post", "get twitter post"),
+            "get_analytics": ("x analytics", "tweet analytics", "twitter analytics"),
+        },
+        "reddit": {
+            "create_post": ("draft reddit post", "draft reddit submission"),
+            "publish_post": ("post to reddit", "publish reddit", "reddit post"),
+            "get_post": ("get reddit post",),
+            "get_analytics": ("reddit analytics", "reddit engagement", "reddit insights"),
+        },
+    }[provider]
+    action_names = (
+        ("create_post", "publish_post", "get_post", "get_insights")
+        if provider == "meta"
+        else ("create_post", "publish_post", "get_post", "get_analytics")
+    )
+    definitions: dict[str, CapabilityDefinition] = {}
+    for action in action_names:
+        read_only = action in ("get_post", "get_insights", "get_analytics")
+        name = f"social_{short}_{action}"
+        action_label = action.replace("_", " ")
+        definitions[name] = _social_definition(
+            name=name,
+            description=(
+                f"{action_label.title()} on {display_name} "
+                f"(provider not configured yet)."
+            ),
+            provider=short,
+            action=action,
+            keywords=keywords[action],
+            requires_approval=not read_only,
+        )
+    return definitions
+
+
+BUILTIN_CAPABILITIES.update(
+    {
+        **_social_definitions("meta", "Meta/Facebook/Instagram"),
+        **_social_definitions("linkedin", "LinkedIn"),
+        **_social_definitions("x", "X (Twitter)"),
+        **_social_definitions("reddit", "Reddit"),
     }
 )

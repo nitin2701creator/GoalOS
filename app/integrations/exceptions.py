@@ -27,3 +27,7 @@ class PermissionDeniedError(ConnectorError):
 
 class CapabilityUnavailableError(ConnectorError):
     """Raised when a requested capability is not configured or supported."""
+
+
+class RateLimitError(ConnectorError):
+    """Raised when a remote API reports that the caller is rate limited."""

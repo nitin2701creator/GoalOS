@@ -29,6 +29,7 @@ class CapabilityCreateRequest(BaseModel):
     execution_capability: str | None = None
     keywords: list[str] = Field(default_factory=list)
     enabled: bool = True
+    requires_approval: bool = False
 
 
 class CapabilityResponse(BaseModel):
@@ -49,6 +50,7 @@ class CapabilityResponse(BaseModel):
     execution_capability: str | None = None
     keywords: list[str]
     enabled: bool
+    requires_approval: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -90,6 +92,7 @@ class CapabilityResolveResponse(BaseModel):
     execution_capability: str | None = None
     description: str | None = None
     category: str | None = None
+    requires_approval: bool = False
 
 
 class CapabilityMatchRequest(BaseModel):

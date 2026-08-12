@@ -16,6 +16,16 @@ Canonical environment variables:
   double-execute it (default ``900``).
 - ``GOALOS_DATABASE_URL`` — database URL (consumed by ``app.db.session``).
 - ``GOALOS_REPOSITORY`` — repository root for development workers.
+- ``GOALOS_TWENTY_BASE_URL`` — Twenty CRM base URL (cloud
+  ``https://api.twenty.com`` or self-hosted ``https://{your-domain}``).
+- ``GOALOS_TWENTY_API_KEY`` — Twenty API key (Settings → API & Webhooks).
+- ``GOALOS_TWENTY_WEBHOOK_SECRET`` — secret used to validate Twenty
+  webhook signatures (HMAC-SHA256 over ``{timestamp}:{payload}``).
+- Social provider credentials (``GOALOS_META_PAGE_ACCESS_TOKEN``,
+  ``GOALOS_LINKEDIN_ACCESS_TOKEN``, ``GOALOS_X_ACCESS_TOKEN``,
+  ``GOALOS_REDDIT_CLIENT_ID``/``_SECRET``/``_USERNAME``/``_PASSWORD``):
+  registered capability names resolve today but report Not Configured
+  until real provider connectors are wired — no credentials are read yet.
 """
 
 from __future__ import annotations
@@ -97,6 +107,37 @@ class RuntimeSettings:
                 )
             ),
         )
+
+
+#: Process-wide settings instance; services read from here unless a test
+#: injects a dedicated instance.
+@dataclass(frozen=True, slots=True)
+class TwentySettings:
+    """Twenty CRM configuration read from environment variables.
+
+    Attributes:
+        base_url: Twenty base URL (cloud or self-hosted workspace).
+        api_key: Twenty API key; never logged or persisted.
+        webhook_secret: Secret validating Twenty webhook signatures.
+    """
+
+    base_url: str = ""
+    api_key: str = ""
+    webhook_secret: str = ""
+
+    @classmethod
+    def from_env(cls) -> TwentySettings:
+        """Build Twenty settings from environment variables (never hard-coded)."""
+        return cls(
+            base_url=os.getenv("GOALOS_TWENTY_BASE_URL", "").strip(),
+            api_key=os.getenv("GOALOS_TWENTY_API_KEY", "").strip(),
+            webhook_secret=os.getenv("GOALOS_TWENTY_WEBHOOK_SECRET", "").strip(),
+        )
+
+
+#: Process-wide Twenty settings; connectors/services may also read env
+#: directly (existing connector convention).
+twenty_settings = TwentySettings.from_env()
 
 
 #: Process-wide settings instance; services read from here unless a test

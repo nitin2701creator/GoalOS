@@ -1,5 +1,6 @@
 from .agent import Agent
 from .capability import Capability, CapabilityStatus
+from .event import EventRecord, EventStatus
 from .execution import Execution, ExecutionStatus
 from .goal import Goal, GoalStatus
 from .objective import Objective
@@ -13,6 +14,8 @@ __all__ = [
     "Agent",
     "Capability",
     "CapabilityStatus",
+    "EventRecord",
+    "EventStatus",
     "Execution",
     "ExecutionStatus",
     "Goal",

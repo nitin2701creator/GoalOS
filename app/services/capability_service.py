@@ -206,6 +206,7 @@ class CapabilityService:
             execution_capability=capability.execution_capability,
             description=capability.description,
             category=capability.category,
+            requires_approval=capability.requires_approval,
         )
 
     def resolve_many(
@@ -580,6 +581,7 @@ class CapabilityService:
             "execution_capability": definition.execution_capability,
             "keywords": list(definition.keywords),
             "enabled": definition.enabled,
+            "requires_approval": definition.requires_approval,
         }
 
     def _to_response(self, capability: Capability) -> CapabilityResponse:
@@ -601,6 +603,7 @@ class CapabilityService:
             execution_capability=capability.execution_capability,
             keywords=list(capability.keywords),
             enabled=capability.enabled,
+            requires_approval=capability.requires_approval,
             created_at=capability.created_at,
             updated_at=capability.updated_at,
         )

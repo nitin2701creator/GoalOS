@@ -27,6 +27,10 @@ class Permission(StrEnum):
     GENERATE_MEDIA = "GENERATE_MEDIA"
     ACCESS_MEMORY = "ACCESS_MEMORY"
     SCHEDULE_WORKFLOWS = "SCHEDULE_WORKFLOWS"
+    READ_CRM = "READ_CRM"
+    WRITE_CRM = "WRITE_CRM"
+    READ_SOCIAL = "READ_SOCIAL"
+    PUBLISH_SOCIAL = "PUBLISH_SOCIAL"
 
 
 #: Permissions that can change external state or run code. These are never
@@ -40,6 +44,8 @@ DANGEROUS_PERMISSIONS = frozenset(
         Permission.EXECUTE_CODE,
         Permission.GENERATE_MEDIA,
         Permission.SCHEDULE_WORKFLOWS,
+        Permission.WRITE_CRM,
+        Permission.PUBLISH_SOCIAL,
     }
 )
 
@@ -57,6 +63,10 @@ PERMISSION_ACTIONS: dict[Permission, str] = {
     Permission.GENERATE_MEDIA: "generate_media",
     Permission.ACCESS_MEMORY: "access_memory",
     Permission.SCHEDULE_WORKFLOWS: "schedule_workflows",
+    Permission.READ_CRM: "read_crm",
+    Permission.WRITE_CRM: "write_crm",
+    Permission.READ_SOCIAL: "read_social",
+    Permission.PUBLISH_SOCIAL: "publish_social",
 }
 
 
