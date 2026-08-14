@@ -281,6 +281,129 @@ def test_llm_refinement_only_accepts_registered_names(tmp_path: Path) -> None:
     assert any(result.name == "web_search" for result in llm_sources)
 
 
+ONLY_WEB_RESEARCH = (
+    "Use ONLY the web_research capability. Do not use WooCommerce, analytics, "
+    "website_analysis, or any other integration. Search the web for Organigram "
+    "India organic food and return the top 3 search results with their titles "
+    "and URLs."
+)
+
+
+def test_only_web_research_resolves_only_web_research(tmp_path: Path) -> None:
+    """Explicit "ONLY X" restrictions constrain the resolved workflow."""
+    service = _service(_session_factory(tmp_path)())
+    resolution = service.resolve_for_goal(ONLY_WEB_RESEARCH)
+    # The workflow contains only the web_research capability — the keyword
+    # matcher would otherwise also match website/analytics/woocommerce
+    # capabilities from the prohibition sentence alone.
+    assert resolution.execution_capabilities == ["web_research"]
+    assert set(resolution.capabilities) == {"web_research", "web_search"}
+    forbidden = {
+        "sales_analysis",
+        "woocommerce_read",
+        "google_analytics_read",
+        "website_analysis",
+        "website_crawl",
+        "website_analyze",
+        "seo_audit",
+    }
+    assert not (set(resolution.capabilities) & forbidden)
+
+
+def test_prohibited_capabilities_never_added(tmp_path: Path) -> None:
+    """"Do not use X" keeps prohibited capabilities out of the plan."""
+    service = _service(_session_factory(tmp_path)())
+    requirement = (
+        "Search the web for Organigram distributors. Do not use WooCommerce, "
+        "analytics, or website_analysis."
+    )
+    resolution = service.resolve_for_goal(requirement)
+    prohibited = {
+        "woocommerce_read",
+        "google_analytics_read",
+        "website_analysis",
+        "website_crawl",
+        "website_analyze",
+        "sales_analysis",
+    }
+    assert not (set(resolution.capabilities) & prohibited)
+    # The requested research work is still resolved and executable.
+    assert "web_search" in resolution.capabilities or "web_research" in resolution.capabilities
+    assert "web_research" in resolution.execution_capabilities
+
+
+def test_unrestricted_request_behaves_as_before(tmp_path: Path) -> None:
+    """Autonomous resolution without restrictions is unchanged."""
+    service = _service(_session_factory(tmp_path)())
+    resolution = service.resolve_for_goal(SEO_GOAL)
+    assert "seo_audit" in resolution.capabilities
+    assert "website_crawl" in resolution.capabilities
+    assert resolution.execution_capabilities == ["keyword_research", "website_analysis"]
+
+
+def test_required_unavailable_capability_still_reports_not_configured(
+    tmp_path: Path,
+) -> None:
+    """Restrictions never mask a genuinely required unavailable capability."""
+    service = _service(_session_factory(tmp_path)())
+    requirement = (
+        "Use ONLY whatsapp_send to send a WhatsApp message to the customer."
+    )
+    resolution = service.resolve_for_goal(requirement)
+    # whatsapp_send is registered (execution-only, no catalog mapping) so
+    # the whitelist keeps it and nothing else.
+    assert resolution.capabilities == ["whatsapp_send"]
+    result = service.execute("whatsapp_send", {}, {Permission.SEND_WHATSAPP})
+    assert result.status == "INTEGRATION_NOT_CONFIGURED"
+
+
+def test_web_research_executes_with_duckduckgo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Restricted web_research executes through the real search pipeline."""
+    monkeypatch.setenv("GOALOS_SEARCH_PROVIDER", "duckduckgo")
+    monkeypatch.setattr("app.integrations.http_client.urlopen", make_fake_opener())
+    service = _service(
+        _session_factory(tmp_path)(),
+        registry=build_default_registry(session=None),
+    )
+    result = service.execute(
+        "web_research",
+        {"query": "Organigram India organic food"},
+        {Permission.READ_WEBSITE},
+    )
+    assert result.status == "OK"
+    assert result.result["source"] == "web.search"
+    assert result.result["provider"] == "duckduckgo"
+    assert len(result.result["findings"]) >= 2
+
+
+def test_llm_cannot_readd_prohibited_capability(tmp_path: Path) -> None:
+    """A misbehaving LLM is never allowed to re-add a prohibited capability."""
+
+    class StubbornProvider:
+        api_key = "fake-key"
+
+        def request(self, prompt: str, **kwargs):
+            # The LLM ignores the restriction and suggests the prohibited
+            # capabilities anyway.
+            return {
+                "response": '["web_research", "sales_analysis", "woocommerce_read", "google_analytics_read"]'
+            }
+
+        def health_check(self) -> bool:
+            return True
+
+    service = _service(
+        _session_factory(tmp_path)(),
+        registry=build_default_registry(session=None),
+        llm_provider=StubbornProvider(),
+    )
+    resolution = service.resolve_for_goal(ONLY_WEB_RESEARCH)
+    assert resolution.execution_capabilities == ["web_research"]
+    assert set(resolution.capabilities) == {"web_research", "web_search"}
+
+
 def test_restart_durability(tmp_path: Path) -> None:
     factory = _session_factory(tmp_path)
     first = _service(factory())

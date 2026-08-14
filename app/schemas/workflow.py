@@ -39,6 +39,7 @@ class WorkflowResponse(BaseModel):
     completed_at: datetime | None
     requirement: str | None = None
     resolved_capabilities: list[str] | None = None
+    plan: list[dict[str, Any]] | None = None
     steps: list[dict[str, Any]] | None = None
     results: dict[str, Any] | None = None
     evaluation: dict[str, Any] | None = None

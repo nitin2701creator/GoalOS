@@ -30,6 +30,7 @@ from typing import Any
 from app.agents.capabilities import capability_spec
 from app.agents.permissions import DANGEROUS_PERMISSIONS
 from app.ai.llm_gateway import LLMGateway
+from app.ai.planner_service import PlannerService
 from app.compat import StrEnum
 from app.db.models.workflow import WorkflowStatus
 from app.integrations.factory import build_default_registry
@@ -163,6 +164,10 @@ class ChatService:
             integration_registry=self.integration_registry,
             llm_provider=llm_provider,
         )
+        # Goal planner: LLM-first decomposition into an ordered capability
+        # plan, with the deterministic capability resolver as fallback (no
+        # LLM configured → behavior identical to the pre-planner path).
+        self.planner_service = PlannerService(self.capability_service, llm_provider)
 
     def handle(self, request: ChatCompletionRequest) -> ChatResult:
         """Route a chat request through the GoalOS autonomous system."""
@@ -238,8 +243,14 @@ class ChatService:
     def _handle_run_workflow(
         self, request: ChatCompletionRequest, message: str
     ) -> ChatResult:
+        # Goal plan first: an LLM-driven ordered capability plan when a
+        # provider is configured, else the deterministic resolver (identical
+        # to the pre-planner behavior). Explicit user restrictions are
+        # applied inside the planner AND re-enforced by the runtime, so a
+        # prohibited capability is never planned, executed, or persisted.
+        plan = self.planner_service.plan_for_goal(message)
+        capabilities = tuple(plan.capabilities)
         resolution = self.capability_service.resolve_for_goal(message)
-        capabilities = tuple(resolution.execution_capabilities)
         if not capabilities:
             return ChatResult(
                 content=(
@@ -259,19 +270,21 @@ class ChatService:
         requirement = build_requirement(request.messages)
         workflow = self._create_goal_chain(message)
         try:
-            # Approve the workflow through the workflow service, then run
-            # it through the execution runtime. The runtime resolves each
-            # capability through the capability engine, reuses/creates the
-            # executing agent (whose declared permissions are granted —
-            # never escalated), dispatches through the existing
-            # connectors/skills, and persists one runtime execution record
-            # per step.
+            # Approve the workflow with the persisted goal plan, then run it
+            # through the execution runtime. The runtime executes the plan's
+            # ordered steps sequentially (chaining each step's output into
+            # the next step's input), resolves each capability through the
+            # capability engine, reuses/creates the executing agent (whose
+            # declared permissions are granted — never escalated), dispatches
+            # through the existing connectors/skills, and persists one
+            # runtime execution record per step.
             self.workflow_service.approve(
                 workflow.id,
                 requirement,
                 capabilities=capabilities,
                 resolved_capabilities=list(resolution.capabilities),
                 capability_service=self.capability_service,
+                plan=PlannerService.plan_to_dict(plan),
             )
             runtime = ExecutionRuntimeService(
                 RuntimeExecutionRepository(self.db),

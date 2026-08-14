@@ -1,3 +1,4 @@
+import logging
 import os
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -15,7 +16,26 @@ from app.control_loop.scheduler_worker import (
 )
 from app.dashboard.dashboard_router import router as dashboard_router
 from app.db.base import Base
+from app.db.schema import ensure_schema
 from app.db.session import engine, get_db
+
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+
+def configure_logging() -> None:
+    """Configure root logging for deployment diagnosis.
+
+    Level comes from ``GOALOS_LOG_LEVEL`` (default ``INFO``); invalid
+    values fall back to INFO so a typo never breaks startup. Uvicorn's
+    own loggers propagate through the same handler.
+    """
+    level = os.getenv("GOALOS_LOG_LEVEL", "INFO").strip().upper()
+    if level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        level = "INFO"
+    logging.basicConfig(level=level, format=_LOG_FORMAT)
+
+
+configure_logging()
 
 app = FastAPI(
     title="GoalOS",
@@ -66,6 +86,9 @@ app.include_router(openai_router, prefix="/v1")
 async def on_startup():
     # Create DB tables if they don't exist.
     Base.metadata.create_all(bind=engine)
+    # Apply idempotent schema additions to pre-existing databases
+    # (create_all never adds columns to existing tables).
+    ensure_schema(engine)
     # Start the persisted scheduler worker (one loop per process; the
     # worker refuses duplicates and claims due runs atomically in the DB,
     # so restarts and multiple uvicorn workers stay safe).

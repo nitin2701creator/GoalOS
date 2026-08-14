@@ -388,6 +388,190 @@ def test_sales_analysis_with_woocommerce_and_ga4(api, monkeypatch: pytest.Monkey
     assert run["results"]["sales_analysis"]["analytics"]["rows"][0]["sessions"] == "1200"
 
 
+ONLY_WEB_RESEARCH_GOAL = (
+    "Use ONLY the web_research capability. Do not use WooCommerce, analytics, "
+    "website_analysis, or any other integration. Search the web for Organigram "
+    "India organic food and return the top 3 search results with their titles "
+    "and URLs."
+)
+
+
+def test_explicit_restriction_controls_resolution(api, monkeypatch: pytest.MonkeyPatch) -> None:
+    """"ONLY web_research ... do not use other integrations" yields a single step.
+
+    This is the production bug regression: the autonomous planner must not
+    add sales_analysis / woocommerce / analytics capabilities merely because
+    the prohibition text mentions them.
+    """
+    monkeypatch.setenv("GOALOS_SEARCH_PROVIDER", "duckduckgo")
+    monkeypatch.setattr("app.integrations.http_client.urlopen", FakeUrlOpener())
+
+    response = _chat(api, [{"role": "user", "content": ONLY_WEB_RESEARCH_GOAL}])
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    assert "Completed" in content
+    assert "INTEGRATION_NOT_CONFIGURED" not in content
+    assert "web_research: Completed" in content
+
+    workflows = api.get("/api/v1/workflows", headers=AUTH).json()
+    assert len(workflows) == 1
+    run = workflows[0]
+    assert run["status"] == "Completed"
+    # The workflow contains ONLY the web_research capability.
+    assert [step["capability"] for step in run["steps"]] == ["web_research"]
+    assert all(step["status"] == "Completed" for step in run["steps"])
+    assert run["results"]["web_research"]["source"] == "web.search"
+    # No prohibited capabilities were resolved or executed.
+    resolved = set(run["resolved_capabilities"])
+    assert "sales_analysis" not in resolved
+    assert "woocommerce_read" not in resolved
+    assert "google_analytics_read" not in resolved
+    assert "website_analysis" not in resolved
+    assert "website_crawl" not in resolved
+    assert run["evaluation"]["passed"] is True
+    assert run["evaluation"]["completed_steps"] == 1
+
+
+def test_restriction_still_reports_required_unavailable_integration(
+    api,
+) -> None:
+    """A genuinely required unavailable capability still reports honestly."""
+    # No search provider configured: web_research requires web.search, so
+    # the run must fail with INTEGRATION_NOT_CONFIGURED — not fabricate
+    # results, and not silently add other capabilities.
+    response = _chat(api, [{"role": "user", "content": ONLY_WEB_RESEARCH_GOAL}])
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    assert content.startswith("INTEGRATION_NOT_CONFIGURED")
+    assert "web.search" in content
+
+    workflows = api.get("/api/v1/workflows", headers=AUTH).json()
+    failed = [w for w in workflows if w["status"] == "Failed"]
+    assert len(failed) == 1
+    assert [step["capability"] for step in failed[0]["steps"]] == ["web_research"]
+    assert "web.search" in (failed[0]["error_message"] or "")
+    assert "woocommerce" not in (failed[0]["error_message"] or "")
+
+
+class PlanFakeProvider:
+    """Fake LLM provider: returns a goal plan only for the planning prompt."""
+
+    api_key = "fake-key"
+
+    def __init__(self, plan_content: str) -> None:
+        self.plan_content = plan_content
+
+    def request(self, prompt: str, **kwargs):  # test double
+        if "GoalOS goal planning engine" in prompt:
+            return {"choices": [{"message": {"content": self.plan_content}}]}
+        # Every other LLM call (refine/polish) returns unparseable text so
+        # the deterministic paths stay untouched.
+        return {"response": "no JSON here."}
+
+    def health_check(self) -> bool:
+        return True
+
+
+class PlanFakeProviderFactory:
+    @staticmethod
+    def create():
+        return PlanFakeProvider(_SEO_PLAN_JSON)
+
+
+_SEO_PLAN_JSON = (
+    '{"steps": ['
+    '{"capability": "web_research", "goal": "Research Organigram SEO issues first"},'
+    '{"capability": "website_analysis", "goal": "Analyze the site using the research"}'
+    "]}"
+)
+
+
+def test_chat_multi_step_goal_plan_executes_in_order_with_chaining(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An LLM goal plan drives ordered, result-chained execution end to end.
+
+    "Analyze Organigram's SEO" with a configured LLM produces the ordered
+    plan [web_research → website_analysis]; the workflow executes the steps
+    in that order and the second step receives the first step's output.
+    """
+    monkeypatch.setenv("GOALOS_SEARCH_PROVIDER", "duckduckgo")
+    monkeypatch.setattr("app.integrations.http_client.urlopen", FakeUrlOpener())
+    monkeypatch.setattr("app.api.v1.openai.ProviderFactory", PlanFakeProviderFactory)
+
+    response = _chat(api, [{"role": "user", "content": RUN_SEO_ANALYSIS}])
+    assert response.status_code == 200
+
+    workflows = api.get("/api/v1/workflows", headers=AUTH).json()
+    run = next(w for w in workflows if w["status"] == "Completed")
+    # The plan order (not the catalog order) is the execution order.
+    assert [step["capability"] for step in run["steps"]] == [
+        "web_research",
+        "website_analysis",
+    ]
+    assert all(step["status"] == "Completed" for step in run["steps"])
+    assert run["plan"] is not None
+    assert [step["capability"] for step in run["plan"]] == [
+        "web_research",
+        "website_analysis",
+    ]
+    assert run["results"]["web_research"]["source"] == "web.search"
+    assert run["results"]["website_analysis"]["source"] == "website.crawl"
+
+    # The second step's persisted execution input contains the chained
+    # output of the first step (previous_outputs).
+    executions = api.get("/api/v1/executions/runtime", headers=AUTH).json()
+    by_capability = {item["capability"]: item for item in executions}
+    previous = (by_capability["website_analysis"]["input"] or {}).get(
+        "previous_outputs"
+    ) or {}
+    assert "web_research" in previous
+    assert previous["web_research"]["source"] == "web.search"
+    assert by_capability["web_research"]["input"]["previous_outputs"] == {}
+
+
+def test_chat_llm_plan_never_adds_prohibited_capabilities(api, monkeypatch) -> None:
+    """A misbehaving LLM plan cannot add capabilities the user prohibited.
+
+    With "ONLY web_research ... do not use other integrations", the LLM
+    plan suggests sales_analysis and website_analysis alongside
+    web_research — the final plan and the executed workflow contain only
+    web_research.
+    """
+    monkeypatch.setenv("GOALOS_SEARCH_PROVIDER", "duckduckgo")
+    monkeypatch.setattr("app.integrations.http_client.urlopen", FakeUrlOpener())
+
+    bad_plan = (
+        '{"steps": ['
+        '{"capability": "web_research", "goal": "Search"},'
+        '{"capability": "sales_analysis", "goal": "Should never run"},'
+        '{"capability": "website_analysis", "goal": "Should never run"}'
+        "]}"
+    )
+
+    class BadPlanFactory:
+        @staticmethod
+        def create():
+            return PlanFakeProvider(bad_plan)
+
+    monkeypatch.setattr("app.api.v1.openai.ProviderFactory", BadPlanFactory)
+
+    response = _chat(api, [{"role": "user", "content": ONLY_WEB_RESEARCH_GOAL}])
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    assert "INTEGRATION_NOT_CONFIGURED" not in content
+
+    workflows = api.get("/api/v1/workflows", headers=AUTH).json()
+    run = next(w for w in workflows if w["status"] == "Completed")
+    assert [step["capability"] for step in run["steps"]] == ["web_research"]
+    assert "sales_analysis" not in (run["results"] or {})
+    assert "website_analysis" not in (run["results"] or {})
+    assert [step["capability"] for step in run["plan"]] == ["web_research"]
+
+    executions = api.get("/api/v1/executions/runtime", headers=AUTH).json()
+    assert {item["capability"] for item in executions} == {"web_research"}
+
+
 def test_works_without_aider(api, monkeypatch: pytest.MonkeyPatch) -> None:
     """GoalOS runs the full chat flow with no Aider anywhere in the process."""
     assert "aider" not in sys.modules

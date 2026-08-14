@@ -242,9 +242,12 @@ class SchedulerService:
             raise ValueError(
                 f"{RuntimeErrorCode.WORKFLOW_INVALID}: workflow has no requirement to run"
             )
-        # The run instance resolves its execution capabilities from the
-        # requirement through the capability engine (identical to the
-        # manual path) — never the template's full matched registry list.
+        # The run instance carries the template's requirement AND its
+        # persisted goal plan (ordered steps + per-step inputs), so
+        # scheduled runs of plan-driven workflows execute sequentially and
+        # result-chained exactly like manual runs. Plan-less templates
+        # resolve their execution capabilities from the requirement through
+        # the capability engine (identical to the manual path).
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         instance = self.workflow_repository.create(
             WorkflowCreateRequest(
@@ -257,6 +260,7 @@ class SchedulerService:
             {
                 "requirement": requirement,
                 "scheduled_from_id": template_id,
+                "plan": template.plan,
             },
         )
         try:

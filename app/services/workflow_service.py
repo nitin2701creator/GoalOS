@@ -542,6 +542,7 @@ class WorkflowService:
         capabilities: tuple[str, ...] | list[str] | None = None,
         resolved_capabilities: list[str] | None = None,
         capability_service: CapabilityService | None = None,
+        plan: list[dict[str, Any]] | None = None,
     ) -> WorkflowResponse:
         """Approve a workflow with its capability plan, without executing.
 
@@ -561,6 +562,9 @@ class WorkflowService:
                 the goal, persisted for auditability.
             capability_service: The capability engine used to resolve the
                 plan when ``capabilities`` is omitted.
+            plan: Optional ordered goal plan (list of serialized
+                :class:`PlanStep` dicts) persisted on the workflow; it is
+                what the execution runtime executes sequentially.
 
         Returns:
             The approved workflow.
@@ -590,6 +594,7 @@ class WorkflowService:
             {
                 "requirement": requirement,
                 "resolved_capabilities": resolved_capabilities,
+                "plan": plan,
                 "steps": [],
                 "results": {},
                 "evaluation": None,

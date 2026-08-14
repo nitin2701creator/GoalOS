@@ -50,6 +50,7 @@ from app.repositories.runtime_execution_repository import RuntimeExecutionReposi
 from app.repositories.workflow_repository import WorkflowRepository
 from app.schemas.agent import AgentCreateRequest
 from app.schemas.capability import CapabilityExecuteResponse
+from app.schemas.plan import PlanStep
 from app.schemas.runtime_execution import (
     RuntimeExecutionResponse,
     RuntimeWorkflowRunResponse,
@@ -498,12 +499,61 @@ class ExecutionRuntimeService:
                 "approved: no requirement is set"
             )
 
-        if capabilities is None:
-            resolution = self.capability_service.resolve_for_goal(requirement)
-            capabilities = tuple(resolution.execution_capabilities)
-            resolved_capabilities = list(resolution.capabilities)
+        # Ordered goal plan: when the workflow was approved with a persisted
+        # plan, the plan steps are the authority — they dictate the execution
+        # order and carry per-step ``inputs`` for result chaining. Explicit
+        # user restrictions are re-applied to the persisted plan as the final
+        # guard: a prohibited step is never executed or persisted, even if it
+        # was somehow persisted in the plan. Unrestricted / plan-less
+        # workflows keep the existing flat resolution exactly as before.
+        plan_specs: list[dict[str, Any]] | None = None
+        persisted_plan = workflow.plan
+        if persisted_plan:
+            specs = [
+                {
+                    "capability": str(item["capability"]),
+                    "goal": str(item.get("goal") or ""),
+                    "inputs": dict(item.get("inputs") or {}),
+                }
+                for item in persisted_plan
+                if isinstance(item, dict) and item.get("capability")
+            ]
+            if specs:
+                filtered = self.capability_service.restrict_plan(
+                    [PlanStep(**spec) for spec in specs], requirement
+                )
+                if not filtered:
+                    return self._fail_run(
+                        workflow,
+                        "the persisted plan is fully prohibited by explicit "
+                        "capability restrictions",
+                        executions=[],
+                    )
+                plan_specs = [
+                    {
+                        "capability": step.capability,
+                        "goal": step.goal,
+                        "inputs": dict(step.inputs or {}),
+                    }
+                    for step in filtered
+                ]
+                capabilities = tuple(step["capability"] for step in plan_specs)
+
+        if plan_specs is None:
+            if capabilities is None:
+                resolution = self.capability_service.resolve_for_goal(requirement)
+                capabilities = tuple(resolution.execution_capabilities)
+                resolved_capabilities = list(resolution.capabilities)
+            else:
+                resolved_capabilities = list(
+                    workflow.resolved_capabilities or capabilities
+                )
         else:
-            resolved_capabilities = list(workflow.resolved_capabilities or capabilities)
+            # Plan path: keep the audited matched registry names persisted at
+            # approval; the plan steps are the ordered execution authority.
+            resolved_capabilities = list(
+                workflow.resolved_capabilities or capabilities
+            )
 
         if not capabilities:
             return self._fail_run(
@@ -542,16 +592,30 @@ class ExecutionRuntimeService:
             },
         )
 
-        steps: list[dict[str, Any]] = [
-            {
-                "capability": capability,
-                "agent_name": agent_name,
-                "status": "Pending",
-                "result": None,
-                "error": None,
-            }
-            for capability in capabilities
-        ]
+        if plan_specs is not None:
+            steps = [
+                {
+                    "capability": spec["capability"],
+                    "agent_name": agent_name,
+                    "goal": spec["goal"],
+                    "inputs": dict(spec["inputs"]),
+                    "status": "Pending",
+                    "result": None,
+                    "error": None,
+                }
+                for spec in plan_specs
+            ]
+        else:
+            steps = [
+                {
+                    "capability": capability,
+                    "agent_name": agent_name,
+                    "status": "Pending",
+                    "result": None,
+                    "error": None,
+                }
+                for capability in capabilities
+            ]
         workflow = self.workflow_repository.update(workflow, {"steps": steps})
 
         # Pre-flight: refuse to run when any required capability is
@@ -635,10 +699,21 @@ class ExecutionRuntimeService:
             return self._fail_run(workflow, message, executions=executions)
 
         executions: list[RuntimeExecutionResponse] = []
+        # Result chaining: each step receives the shared requirement input,
+        # the accumulated outputs of the steps that already completed
+        # (``previous_outputs``), and its own explicit ``inputs`` overrides.
+        # Only succeeded steps' outputs are chained forward — a failed step's
+        # partial output is never passed on as if it were real data.
+        accumulated_outputs: dict[str, Any] = {}
         for step in steps:
+            params = derive_workflow_input(requirement)
+            params["previous_outputs"] = dict(accumulated_outputs)
+            step_inputs = step.get("inputs")
+            if isinstance(step_inputs, dict) and step_inputs:
+                params.update(step_inputs)
             execution = self.execute(
                 step["capability"],
-                derive_workflow_input(requirement),
+                params,
                 granted,
                 workflow_id=workflow_id,
                 agent_name=agent_name,
@@ -649,6 +724,11 @@ class ExecutionRuntimeService:
             )
             step["result"] = execution.output
             step["error"] = execution.error
+            if (
+                execution.status is RuntimeExecutionStatus.SUCCEEDED
+                and execution.output is not None
+            ):
+                accumulated_outputs[step["capability"]] = execution.output
 
         results: dict[str, Any] = {}
         for step in steps:
@@ -735,6 +815,7 @@ class ExecutionRuntimeService:
             {
                 "requirement": requirement,
                 "scheduled_from_id": workflow.id,
+                "plan": workflow.plan,
             },
         )
         # The fresh instance re-resolves its execution capabilities from the

@@ -12,6 +12,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.agents.capability_restrictions import (
+    apply_capability_restrictions,
+    parse_capability_restrictions,
+)
 from app.agents.permissions import Permission
 
 
@@ -118,7 +122,9 @@ def resolve_capabilities(requirement: str) -> tuple[str, ...]:
         requirement: Plain-language business requirement.
 
     Returns:
-        Matched capability names in deterministic catalog order.
+        Matched capability names in deterministic catalog order. Explicit
+        user restrictions ("use ONLY X", "do not use Y") are honored so
+        prohibited capabilities are never added.
     """
     text = requirement.casefold()
     matched = [
@@ -126,7 +132,9 @@ def resolve_capabilities(requirement: str) -> tuple[str, ...]:
         for capability, keywords in _CAPABILITY_KEYWORDS
         if any(keyword in text for keyword in keywords)
     ]
-    return tuple(dict.fromkeys(matched))
+    restrictions = parse_capability_restrictions(requirement, _CAPABILITY_KEYWORDS)
+    filtered = apply_capability_restrictions(matched, restrictions)
+    return tuple(dict.fromkeys(filtered))
 
 
 def capability_spec(capability: str) -> CapabilitySpec:

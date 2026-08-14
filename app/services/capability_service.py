@@ -36,6 +36,11 @@ from app.agents.capability_definitions import (
     CapabilityDefinition,
     CapabilityProviderType,
 )
+from app.agents.capability_restrictions import (
+    CapabilityRestrictions,
+    apply_capability_restrictions,
+    parse_capability_restrictions,
+)
 from app.agents.factory.skill_implementations import SKILL_IMPLEMENTATIONS
 from app.agents.permissions import Permission
 from app.ai.llm_gateway import LLMGateway
@@ -56,6 +61,7 @@ from app.schemas.capability import (
     CapabilityResolveResponse,
     CapabilityResponse,
 )
+from app.schemas.plan import PlanStep
 
 
 def _parse_name_list(text: str) -> list[str]:
@@ -223,6 +229,11 @@ class CapabilityService:
         Deterministic keyword matching runs first over every registered
         capability's keywords. When an LLM provider is configured, it may
         add capabilities — but only names already registered are accepted.
+
+        Explicit user restrictions ("use ONLY X", "do not use Y") are
+        parsed from the requirement and applied as the final hard filter,
+        so a user's explicit restriction always wins over any capability
+        the keyword matcher or the LLM would otherwise add.
         """
         self.ensure_seeded()
         text = requirement.casefold()
@@ -231,7 +242,17 @@ class CapabilityService:
             keywords = list(capability.keywords or ())
             if keywords and any(keyword in text for keyword in keywords):
                 matched.append(self._match_result(capability, "keyword"))
-        return self._llm_refine(requirement, matched)
+        restrictions = parse_capability_restrictions(
+            requirement, self._known_capabilities()
+        )
+        matched = self._llm_refine(requirement, matched, restrictions=restrictions)
+        if not restrictions.active:
+            return matched
+        return apply_capability_restrictions(
+            matched,
+            restrictions,
+            resolve=self._restriction_aliases,
+        )
 
     def resolve_for_goal(self, requirement: str) -> CapabilityGoalResolution:
         """Resolve a goal into matched + execution capability sets.
@@ -511,7 +532,15 @@ class CapabilityService:
         self,
         requirement: str,
         matched: list[CapabilityMatchResult],
+        restrictions: CapabilityRestrictions | None = None,
     ) -> list[CapabilityMatchResult]:
+        """LLM refinement adds only registered names, respecting restrictions.
+
+        The prompt tells the LLM about explicit user restrictions when
+        present; the caller still applies the restrictions as the final
+        hard filter, so a misbehaving LLM can never re-add a prohibited
+        capability.
+        """
         provider = self.llm_provider
         if not provider_configured(provider):
             return matched
@@ -523,6 +552,12 @@ class CapabilityService:
             f"Available capabilities: {', '.join(known)}\n"
             f"Goal: {requirement}\n"
         )
+        if restrictions is not None and restrictions.active:
+            prompt += (
+                "The user explicitly restricted the capabilities.\n"
+                f"{restrictions.describe()}\n"
+                "Return ONLY capability names that respect these restrictions.\n"
+            )
         try:
             payload = provider.request(prompt)
             names = _parse_name_list(LLMGateway._response_text(payload))
@@ -537,6 +572,90 @@ class CapabilityService:
                 continue  # never trust unregistered names
             matched.append(self._match_result(capability, "llm"))
         return matched
+
+    def _known_capabilities(self) -> list[tuple[str, tuple[str, ...]]]:
+        """Return (name, keywords) pairs for restriction resolution."""
+        return [
+            (capability.name, tuple(capability.keywords or ()))
+            for capability in self.repository.list()
+        ]
+
+    def restrictions_for(self, requirement: str) -> CapabilityRestrictions:
+        """Parse explicit user restrictions from a requirement."""
+        return parse_capability_restrictions(requirement, self._known_capabilities())
+
+    def restrict_plan(
+        self,
+        steps: list[PlanStep] | tuple[PlanStep, ...],
+        requirement: str,
+    ) -> list[PlanStep]:
+        """Filter plan steps by explicit user restrictions (last word wins).
+
+        Each step's capability is checked together with its related
+        capabilities (execution capability and required integrations), so a
+        prohibited capability — or one that depends on a prohibited
+        integration — is never planned. Unrestricted requirements pass
+        through unchanged.
+        """
+        restrictions = self.restrictions_for(requirement)
+        if not restrictions.active:
+            return list(steps)
+        return [
+            step for step in steps if self._step_allowed(step.capability, restrictions)
+        ]
+
+    def _step_allowed(
+        self,
+        capability_name: str,
+        restrictions: CapabilityRestrictions,
+    ) -> bool:
+        """Whether a capability step survives the restriction sets."""
+        related = {capability_name}
+        related.update(self._restriction_aliases(capability_name))
+        if restrictions.whitelist and not (related & restrictions.whitelist):
+            return False
+        return not (related & restrictions.blacklist)
+
+    def _restriction_aliases(self, name: str) -> set[str]:
+        """Related capability names for restriction matching.
+
+        A capability is related to its execution capability (``web_search``
+        executes as ``web_research``) and to the integration capabilities
+        it requires (``sales_analysis`` requires the same implementations
+        as ``woocommerce_read``/``google_analytics_read``). This lets
+        "do not use X" also remove capabilities that depend on X, and
+        "ONLY X" keep the capabilities that implement X.
+        """
+        capability = self.repository.get_by_name(name)
+        if capability is None:
+            return set()
+        aliases: set[str] = set()
+        if capability.execution_capability:
+            aliases.add(capability.execution_capability)
+        try:
+            spec = (
+                capability_spec(capability.execution_capability)
+                if capability.execution_capability
+                else None
+            )
+        except ValueError:
+            spec = None
+        required = (
+            spec.integration_capabilities if spec is not None else ()
+        )
+        if not required and capability.implementation:
+            required = (capability.implementation,)
+        if not required:
+            return aliases
+        implementation_by_name = {
+            other.name: other.implementation for other in self.repository.list()
+        }
+        for other_name, implementation in implementation_by_name.items():
+            if other_name == name:
+                continue
+            if implementation in required:
+                aliases.add(other_name)
+        return aliases
 
     def _execution_capabilities(self, names: list[str]) -> tuple[str, ...]:
         """Dedupe matched capabilities into catalog-ordered execution set."""

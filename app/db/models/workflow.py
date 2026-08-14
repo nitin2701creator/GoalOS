@@ -53,6 +53,9 @@ class Workflow(Base):
     # Agent workflow run state: populated by WorkflowService.run_agent_workflow.
     requirement: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolved_capabilities: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    #: Ordered goal plan (list of PlanStep dicts) driving sequential,
+    #: result-chained execution; populated by the goal planner.
+    plan: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
     steps: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
     results: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     evaluation: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
