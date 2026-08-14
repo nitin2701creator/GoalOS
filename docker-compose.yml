@@ -1,12 +1,30 @@
-# GoalOS + OpenWebUI on the KVM.
+# GoalOS on the KVM.
 #
-# GoalOS and OpenWebUI run as separate containers on the same KVM and talk
-# over the Docker network by service name — never localhost. OpenWebUI is
-# pointed at http://goalos:8000/v1 with the key from GOALOS_OPENWEBUI_API_KEY.
+# Architecture:
 #
-# LLM_PROVIDER=openai_compatible + LLM_API_BASE_URL=<FreeLLMAPI endpoint>
-# lets GoalOS use the FreeLLMAPI gateway for LLM reasoning. Example values
-# below assume the freellmapi service; adjust to your deployment.
+#   Internet
+#      |
+#      v
+#   OpenWebUI :8080   (existing KVM container — NOT managed here)
+#      |
+#      v
+#   GoalOS :8000      (this service)
+#      |
+#      +----> SQLite on the goalos-data volume
+#      |
+#      +----> FreeLLMAPI :3001 (existing KVM service on the host,
+#                              reached via host.docker.internal)
+#
+# OpenWebUI is pointed at http://goalos:8000/v1 (when OpenWebUI is on the
+# same Docker network) or http://<kvm-ip>:8000/v1, using the key from
+# GOALOS_OPENWEBUI_API_KEY. FreeLLMAPI already runs on the KVM host at
+# 127.0.0.1:3001, so no gateway container is defined here; set
+# LLM_BASE_URL in .env if your gateway lives elsewhere.
+#
+# Usage:
+#   cp env.example .env   # then fill in GOALOS_OPENWEBUI_API_KEY etc.
+#   docker compose up -d --build
+#   curl http://localhost:8000/health
 services:
   goalos:
     build: .
@@ -15,25 +33,38 @@ services:
       - "8000:8000"
     volumes:
       - goalos-data:/data
+    extra_hosts:
+      # Lets the container reach FreeLLMAPI running on the KVM host
+      # (Docker >= 20.10 on Linux). Only used when LLM_BASE_URL is not set.
+      - "host.docker.internal:host-gateway"
     environment:
+      # Persistent database on the mounted volume (image default).
+      GOALOS_DATABASE_URL: "sqlite:////data/goalos.db"
       # OpenAI-compatible surface consumed by OpenWebUI.
       GOALOS_OPENWEBUI_API_KEY: "${GOALOS_OPENWEBUI_API_KEY:?set this in .env}"
-      # OpenWebUI origin (for CORS) — use the public/KVM URL, not localhost.
+      # OpenWebUI origin (for CORS) — the public/KVM URL, not localhost.
       OPENWEBUI_BASE_URL: "${OPENWEBUI_BASE_URL:-http://localhost:3000}"
+      # Application log level: DEBUG | INFO | WARNING | ERROR.
+      GOALOS_LOG_LEVEL: "${GOALOS_LOG_LEVEL:-INFO}"
       # Persisted scheduler: runs due schedules in-process through the
       # execution runtime. Due runs are claimed atomically in the DB, so
       # multiple workers/restarts never double-execute.
       GOALOS_SCHEDULER_ENABLED: "${GOALOS_SCHEDULER_ENABLED:-1}"
       GOALOS_SCHEDULER_INTERVAL: "${GOALOS_SCHEDULER_INTERVAL:-30}"
       GOALOS_SCHEDULER_CLAIM_HORIZON: "${GOALOS_SCHEDULER_CLAIM_HORIZON:-900}"
-      # LLM gateway configuration (FreeLLMAPI on the same Docker network).
+      # LLM gateway: FreeLLMAPI on the KVM host (default). The URL accepts
+      # a bare origin, a /v1 root, or the full /v1/chat/completions path.
       LLM_PROVIDER: "${LLM_PROVIDER:-openai_compatible}"
-      LLM_API_BASE_URL: "${LLM_API_BASE_URL:-http://freellmapi:8000/v1/chat/completions}"
+      LLM_BASE_URL: "${LLM_BASE_URL:-http://host.docker.internal:3001/v1}"
       LLM_API_KEY: "${LLM_API_KEY:-}"
       LLM_MODEL: "${LLM_MODEL:-free-llm-small}"
-      # Integration credentials (optional; integrations report Not Configured
-      # until these are set).
+      # Web research provider (duckduckgo | empty to disable).
       GOALOS_SEARCH_PROVIDER: "${GOALOS_SEARCH_PROVIDER:-duckduckgo}"
+      # Integration credentials (optional; integrations report Not
+      # Configured until these are set).
+      GOALOS_TWENTY_BASE_URL: "${GOALOS_TWENTY_BASE_URL:-}"
+      GOALOS_TWENTY_API_KEY: "${GOALOS_TWENTY_API_KEY:-}"
+      GOALOS_TWENTY_WEBHOOK_SECRET: "${GOALOS_TWENTY_WEBHOOK_SECRET:-}"
       GOALOS_GMAIL_CLIENT_ID: "${GOALOS_GMAIL_CLIENT_ID:-}"
       GOALOS_GMAIL_CLIENT_SECRET: "${GOALOS_GMAIL_CLIENT_SECRET:-}"
       GOALOS_GMAIL_REFRESH_TOKEN: "${GOALOS_GMAIL_REFRESH_TOKEN:-}"
@@ -45,36 +76,12 @@ services:
       GOALOS_GA4_PRIVATE_KEY: "${GOALOS_GA4_PRIVATE_KEY:-}"
       GOALOS_META_ACCESS_TOKEN: "${GOALOS_META_ACCESS_TOKEN:-}"
       GOALOS_META_AD_ACCOUNT_ID: "${GOALOS_META_AD_ACCOUNT_ID:-}"
-      # Twenty CRM (REST API + webhook signature validation).
-      GOALOS_TWENTY_BASE_URL: "${GOALOS_TWENTY_BASE_URL:-}"
-      GOALOS_TWENTY_API_KEY: "${GOALOS_TWENTY_API_KEY:-}"
-      GOALOS_TWENTY_WEBHOOK_SECRET: "${GOALOS_TWENTY_WEBHOOK_SECRET:-}"
-      # Social media provider credentials — registered capability names
-      # resolve today but report Not Configured until real provider
-      # connectors are wired; these vars are placeholders, not secrets in
-      # use.
-      # GOALOS_META_PAGE_ACCESS_TOKEN: "${GOALOS_META_PAGE_ACCESS_TOKEN:-}"
-      # GOALOS_LINKEDIN_ACCESS_TOKEN: "${GOALOS_LINKEDIN_ACCESS_TOKEN:-}"
-      # GOALOS_X_ACCESS_TOKEN: "${GOALOS_X_ACCESS_TOKEN:-}"
-      # GOALOS_REDDIT_CLIENT_ID: "${GOALOS_REDDIT_CLIENT_ID:-}"
-      # GOALOS_REDDIT_CLIENT_SECRET: "${GOALOS_REDDIT_CLIENT_SECRET:-}"
-      # GOALOS_REDDIT_USERNAME: "${GOALOS_REDDIT_USERNAME:-}"
-      # GOALOS_REDDIT_PASSWORD: "${GOALOS_REDDIT_PASSWORD:-}"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-    restart: unless-stopped
-
-  # FreeLLMAPI LLM gateway (adjust image/env to your gateway). Comment out
-  # when pointing LLM_API_BASE_URL at an external gateway.
-  freellmapi:
-    image: "${FREELLMAPI_IMAGE:-freellm/freellm-api:latest}"
-    container_name: freellmapi
-    environment:
-      API_KEY: "${LLM_API_KEY:-}"
     restart: unless-stopped
 
 volumes:

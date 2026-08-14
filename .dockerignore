@@ -1,0 +1,37 @@
+# GoalOS Docker build context exclusions.
+# The image only needs app/ and requirements.txt; everything else is
+# development or deployment material and must not bloat the build context
+# or leak secrets into image layers.
+
+# Secrets and local configuration — never copy into an image.
+.env
+.env.*
+!.env.example
+
+# Databases and runtime data.
+*.db
+*.sqlite
+*.sqlite3
+data/
+goalos-data/
+
+# Python artifacts.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Node/docs/dev material not needed at runtime.
+node_modules/
+dist/
+tests/
+docs/
+development/
+workflows/
+agents/
+hello_codex.txt
+
+# Git metadata.
+.git/
+.gitignore
