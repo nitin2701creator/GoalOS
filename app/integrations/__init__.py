@@ -16,6 +16,8 @@ from app.integrations.exceptions import (
 )
 from app.integrations.factory import SUPPORTED_INTEGRATIONS, build_default_registry
 from app.integrations.google_analytics import GoogleAnalyticsConnector
+from app.integrations.google_calendar import GoogleCalendarConnector
+from app.integrations.google_drive import GoogleDriveConnector
 from app.integrations.http_client import (
     HttpClient,
     HttpConnectionError,
@@ -25,6 +27,7 @@ from app.integrations.http_client import (
     HttpTimeoutError,
 )
 from app.integrations.integration_connector import IntegrationConnector
+from app.integrations.linkedin import LinkedInConnector
 from app.integrations.meta_ads import MetaAdsConnector
 from app.integrations.scheduler import SchedulerConnector
 from app.integrations.social import SocialConnector
@@ -47,6 +50,8 @@ __all__ = [
     "ConnectorRegistry",
     "ConnectorUnavailableError",
     "GoogleAnalyticsConnector",
+    "GoogleCalendarConnector",
+    "GoogleDriveConnector",
     "HttpClient",
     "HttpConnectionError",
     "HttpResponse",
@@ -54,6 +59,7 @@ __all__ = [
     "HttpStatusError",
     "HttpTimeoutError",
     "IntegrationConnector",
+    "LinkedInConnector",
     "MetaAdsConnector",
     "PermissionDeniedError",
     "RateLimitError",

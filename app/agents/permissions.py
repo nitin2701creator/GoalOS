@@ -29,6 +29,10 @@ class Permission(StrEnum):
     SCHEDULE_WORKFLOWS = "SCHEDULE_WORKFLOWS"
     READ_CRM = "READ_CRM"
     WRITE_CRM = "WRITE_CRM"
+    READ_CALENDAR = "READ_CALENDAR"
+    WRITE_CALENDAR = "WRITE_CALENDAR"
+    READ_DRIVE = "READ_DRIVE"
+    WRITE_DRIVE = "WRITE_DRIVE"
     READ_SOCIAL = "READ_SOCIAL"
     PUBLISH_SOCIAL = "PUBLISH_SOCIAL"
 
@@ -45,6 +49,8 @@ DANGEROUS_PERMISSIONS = frozenset(
         Permission.GENERATE_MEDIA,
         Permission.SCHEDULE_WORKFLOWS,
         Permission.WRITE_CRM,
+        Permission.WRITE_CALENDAR,
+        Permission.WRITE_DRIVE,
         Permission.PUBLISH_SOCIAL,
     }
 )
@@ -65,6 +71,10 @@ PERMISSION_ACTIONS: dict[Permission, str] = {
     Permission.SCHEDULE_WORKFLOWS: "schedule_workflows",
     Permission.READ_CRM: "read_crm",
     Permission.WRITE_CRM: "write_crm",
+    Permission.READ_CALENDAR: "read_calendar",
+    Permission.WRITE_CALENDAR: "write_calendar",
+    Permission.READ_DRIVE: "read_drive",
+    Permission.WRITE_DRIVE: "write_drive",
     Permission.READ_SOCIAL: "read_social",
     Permission.PUBLISH_SOCIAL: "publish_social",
 }

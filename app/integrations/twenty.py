@@ -8,10 +8,13 @@ workspaces (``https://{your-domain}``); custom-object endpoints are never
 assumed — reads/writes target the standard core objects (people, companies,
 opportunities, tasks, notes) with the caller-supplied field values.
 
+Configuration accepts ``TWENTY_API_URL``/``TWENTY_API_KEY`` with the legacy
+``GOALOS_TWENTY_BASE_URL``/``GOALOS_TWENTY_API_KEY`` names as fallbacks.
+
 Honesty contract:
 
-- Missing ``GOALOS_TWENTY_BASE_URL``/``GOALOS_TWENTY_API_KEY`` reports
-  ``Not Configured`` — never a fake success.
+- Missing base URL/API key reports ``Not Configured`` — never a fake
+  success.
 - HTTP 401/403 maps to :class:`AuthenticationError` (distinct from other
   failures).
 - HTTP 429 maps to :class:`RateLimitError`.
@@ -54,6 +57,20 @@ _CAPABILITY_OBJECTS: dict[str, str] = {
     "twenty.create_note": "notes",
 }
 
+#: Capability → object slug for list (no free-text query) operations.
+_LIST_CAPABILITIES: dict[str, str] = {
+    "twenty.list_people": "people",
+    "twenty.list_companies": "companies",
+    "twenty.list_opportunities": "opportunities",
+}
+
+#: Capability → object slug for single-record get operations.
+_GET_CAPABILITIES: dict[str, str] = {
+    "twenty.get_person": "people",
+    "twenty.get_company": "companies",
+    "twenty.get_opportunity": "opportunities",
+}
+
 #: Standard core-object fields searched by ``query`` (not custom fields —
 #: workspace-specific fields are passed through via ``filter`` instead).
 _SEARCH_FIELDS: dict[str, tuple[str, ...]] = {
@@ -66,9 +83,16 @@ _SEARCH_FIELDS: dict[str, tuple[str, ...]] = {
 
 _READ_CAPABILITIES = frozenset(
     {
+        "twenty.health",
         "twenty.search_people",
         "twenty.search_companies",
         "twenty.search_opportunities",
+        "twenty.list_people",
+        "twenty.list_companies",
+        "twenty.list_opportunities",
+        "twenty.get_person",
+        "twenty.get_company",
+        "twenty.get_opportunity",
         "twenty.get_record",
     }
 )
@@ -87,7 +111,10 @@ class TwentyConnector(IntegrationConnector):
         )
         for capability in (
             *(_CAPABILITY_OBJECTS.keys()),
+            *(_LIST_CAPABILITIES.keys()),
+            *(_GET_CAPABILITIES.keys()),
             "twenty.get_record",
+            "twenty.health",
         )
     }
 
@@ -103,17 +130,34 @@ class TwentyConnector(IntegrationConnector):
             description="Twenty CRM REST API integration",
         )
         self.client = client or HttpClient()
-        self.base_url = (base_url or self._env("GOALOS_TWENTY_BASE_URL") or "").rstrip("/")
-        self.api_key = api_key or self._env("GOALOS_TWENTY_API_KEY") or ""
+        self.base_url = (
+            base_url
+            or self._env("TWENTY_API_URL")
+            or self._env("GOALOS_TWENTY_BASE_URL")
+            or ""
+        ).rstrip("/")
+        self.api_key = (
+            api_key
+            or self._env("TWENTY_API_KEY")
+            or self._env("GOALOS_TWENTY_API_KEY")
+            or ""
+        )
 
     def _capabilities(self) -> tuple[str, ...]:
         return (
+            "twenty.health",
+            "twenty.list_people",
+            "twenty.get_person",
             "twenty.search_people",
             "twenty.create_person",
             "twenty.update_person",
+            "twenty.list_companies",
+            "twenty.get_company",
             "twenty.search_companies",
             "twenty.create_company",
             "twenty.update_company",
+            "twenty.list_opportunities",
+            "twenty.get_opportunity",
             "twenty.search_opportunities",
             "twenty.create_opportunity",
             "twenty.update_opportunity",
@@ -126,14 +170,11 @@ class TwentyConnector(IntegrationConnector):
     def _configuration_status(self) -> tuple[Any, str | None]:
         from app.integrations.connector_health import ConnectorHealthStatus
 
-        missing = [
-            name
-            for name, value in (
-                ("GOALOS_TWENTY_BASE_URL", self.base_url),
-                ("GOALOS_TWENTY_API_KEY", self.api_key),
-            )
-            if not value
-        ]
+        missing: list[str] = []
+        if not self.base_url:
+            missing.append("GOALOS_TWENTY_BASE_URL (or TWENTY_API_URL)")
+        if not self.api_key:
+            missing.append("GOALOS_TWENTY_API_KEY (or TWENTY_API_KEY)")
         if missing:
             return (
                 ConnectorHealthStatus.NOT_CONFIGURED,
@@ -142,8 +183,14 @@ class TwentyConnector(IntegrationConnector):
         return ConnectorHealthStatus.HEALTHY, "configured"
 
     def _dispatch(self, capability: str, params: dict[str, Any]) -> dict[str, Any]:
+        if capability == "twenty.health":
+            return self._health()
         if capability == "twenty.get_record":
             return self._get_record(params)
+        if capability in _LIST_CAPABILITIES:
+            return self._search(_LIST_CAPABILITIES[capability], params)
+        if capability in _GET_CAPABILITIES:
+            return self._get_one(_GET_CAPABILITIES[capability], params)
         if capability.startswith("twenty.search_"):
             return self._search(_CAPABILITY_OBJECTS[capability], params)
         if capability.startswith("twenty.create_"):
@@ -224,6 +271,15 @@ class TwentyConnector(IntegrationConnector):
         record_id = params.get("id") or params.get("object_id")
         if not object_slug or not record_id:
             raise ValueError("object and id are required for twenty.get_record")
+        return self._get_one(object_slug, params, record_id=record_id)
+
+    def _get_one(
+        self, object_slug: str, params: dict[str, Any], record_id: str | None = None
+    ) -> dict[str, Any]:
+        """Fetch one record by id for a standard object slug."""
+        record_id = record_id or params.get("id") or params.get("object_id")
+        if not record_id:
+            raise ValueError(f"id is required to get {object_slug}")
         response = self._fetch(
             "GET",
             self._url(f"{object_slug}/{record_id}"),
@@ -232,6 +288,16 @@ class TwentyConnector(IntegrationConnector):
         payload = self._decode(response, path=f"/rest/{object_slug}/{record_id}")
         data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
         return {"object": object_slug, "id": str(record_id), "data": data}
+
+    def _health(self) -> dict[str, Any]:
+        """Report configuration health without touching the network."""
+        status, message = self._configuration_status()
+        return {
+            "integration": "twenty",
+            "status": status.value,
+            "configured": status.value == "Healthy",
+            "message": message,
+        }
 
     # ------------------------------------------------------------------
     # Transport helpers

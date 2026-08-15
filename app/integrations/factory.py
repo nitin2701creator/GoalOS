@@ -14,7 +14,10 @@ from sqlalchemy.orm import Session
 from app.integrations.connector_registry import ConnectorRegistry
 from app.integrations.email.providers.gmail_provider import GmailProvider
 from app.integrations.google_analytics import GoogleAnalyticsConnector
+from app.integrations.google_calendar import GoogleCalendarConnector
+from app.integrations.google_drive import GoogleDriveConnector
 from app.integrations.http_client import HttpClient
+from app.integrations.linkedin import LinkedInConnector
 from app.integrations.meta_ads import MetaAdsConnector
 from app.integrations.scheduler import SchedulerConnector
 from app.integrations.social import SocialConnector
@@ -28,11 +31,14 @@ SUPPORTED_INTEGRATIONS: tuple[str, ...] = (
     "web",
     "website",
     "gmail",
+    "calendar",
+    "drive",
     "woocommerce",
     "google_analytics",
     "meta_ads",
     "scheduler",
     "twenty",
+    "linkedin",
     "social",
 )
 
@@ -46,18 +52,22 @@ _CAPABILITY_INTEGRATION_ALIASES: dict[str, str] = {
     "meta": "meta_ads",
 }
 
-#: Registry name → functional integration type (web, email, crm, ...).
-#: Used by the persisted integration registry so every registered
-#: connector is represented as an executable integration with a type.
+#: Registry name → functional integration type (web, email, calendar,
+#: storage, crm, ...). Used by the persisted integration registry so
+#: every registered connector is represented as an executable integration
+#: with a type.
 INTEGRATION_TYPES: dict[str, str] = {
     "web": "web",
     "website": "web",
     "gmail": "email",
+    "calendar": "calendar",
+    "drive": "storage",
     "woocommerce": "commerce",
     "google_analytics": "analytics",
     "meta_ads": "advertising",
     "scheduler": "scheduler",
     "twenty": "crm",
+    "linkedin": "social",
     "social": "social",
 }
 
@@ -105,8 +115,11 @@ def build_default_registry(
     )
     registry.register(MetaAdsConnector(client=client or HttpClient()))
     registry.register(GmailProvider(service=_default_gmail_service(client)))
+    registry.register(GoogleCalendarConnector(client=client or HttpClient()))
+    registry.register(GoogleDriveConnector(client=client or HttpClient()))
     registry.register(SchedulerConnector(db=session))
     registry.register(TwentyConnector(client=client or HttpClient()))
+    registry.register(LinkedInConnector(client=client or HttpClient()))
     registry.register(SocialConnector())
     return registry
 

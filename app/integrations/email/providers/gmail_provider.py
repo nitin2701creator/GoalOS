@@ -9,7 +9,12 @@ from app.integrations.connector_health import ConnectorHealth, ConnectorHealthSt
 from app.integrations.email.authentication import EmailAuthenticator
 from app.integrations.email.config import EmailConfig
 from app.integrations.email.email_connector import EmailConnector
-from app.integrations.email.models import EmailFolder, EmailMessage, EmailSearchResult
+from app.integrations.email.models import (
+    AttachmentMetadata,
+    EmailFolder,
+    EmailMessage,
+    EmailSearchResult,
+)
 from app.integrations.email.providers.gmail_rest_service import (
     GmailRESTService,
     message_from_dict,
@@ -32,6 +37,10 @@ class GmailService(Protocol):
     def create_draft(self, message: EmailMessage) -> EmailMessage: ...
     def send_message(self, message: EmailMessage) -> EmailMessage: ...
     def reply(self, message_id: str, message: EmailMessage) -> EmailMessage: ...
+    def list_threads(self, query: str = "", max_results: int = 20) -> list[EmailMessage]: ...
+    def get_thread(self, thread_id: str) -> dict[str, Any]: ...
+    def list_attachments(self, message_id: str) -> list[AttachmentMetadata]: ...
+    def get_attachment(self, message_id: str, attachment_id: str) -> dict[str, Any]: ...
 
 
 class UnavailableGmailService:
@@ -51,6 +60,10 @@ class UnavailableGmailService:
     def create_draft(self, message: EmailMessage) -> EmailMessage: self._unavailable()
     def send_message(self, message: EmailMessage) -> EmailMessage: self._unavailable()
     def reply(self, message_id: str, message: EmailMessage) -> EmailMessage: self._unavailable()
+    def list_threads(self, query: str = "", max_results: int = 20) -> list[EmailMessage]: self._unavailable()
+    def get_thread(self, thread_id: str) -> dict[str, Any]: self._unavailable()
+    def list_attachments(self, message_id: str) -> list[AttachmentMetadata]: self._unavailable()
+    def get_attachment(self, message_id: str, attachment_id: str) -> dict[str, Any]: self._unavailable()
 
 
 class GmailProvider(EmailConnector):
@@ -67,6 +80,15 @@ class GmailProvider(EmailConnector):
         "email.read": Permission.READ_EMAIL,
         "email.draft": Permission.SEND_EMAIL,
         "email.send": Permission.SEND_EMAIL,
+        "gmail.health": Permission.READ_EMAIL,
+        "gmail.search_messages": Permission.READ_EMAIL,
+        "gmail.get_message": Permission.READ_EMAIL,
+        "gmail.get_thread": Permission.READ_EMAIL,
+        "gmail.list_threads": Permission.READ_EMAIL,
+        "gmail.list_attachments": Permission.READ_EMAIL,
+        "gmail.get_attachment": Permission.READ_EMAIL,
+        "gmail.send_message": Permission.SEND_EMAIL,
+        "gmail.reply_to_thread": Permission.SEND_EMAIL,
     }
 
     def __init__(
@@ -93,7 +115,21 @@ class GmailProvider(EmailConnector):
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        return ("email.search", "email.read", "email.draft", "email.send")
+        return (
+            "email.search",
+            "email.read",
+            "email.draft",
+            "email.send",
+            "gmail.health",
+            "gmail.search_messages",
+            "gmail.get_message",
+            "gmail.get_thread",
+            "gmail.list_threads",
+            "gmail.send_message",
+            "gmail.reply_to_thread",
+            "gmail.list_attachments",
+            "gmail.get_attachment",
+        )
 
     @property
     def is_configured(self) -> bool:
@@ -132,17 +168,66 @@ class GmailProvider(EmailConnector):
                 f"'{required.value}', which was not granted"
             )
         params = params or {}
-        if capability == "email.search":
+        if capability in ("email.search", "gmail.search_messages"):
             return {"query": params["query"], "messages": self._search(params["query"])}
-        if capability == "email.read":
+        if capability in ("email.read", "gmail.get_message"):
             return {"message": self._message(params["message_id"])}
         if capability == "email.draft":
             draft = self.create_draft(message_from_dict(params["message"]))
             return {"draft_id": draft.id, "subject": draft.subject}
-        if capability == "email.send":
+        if capability in ("email.send", "gmail.send_message"):
             sent = self.send_message(message_from_dict(params["message"]))
             return {"message_id": sent.id, "subject": sent.subject}
+        if capability == "gmail.health":
+            return self._health()
+        if capability == "gmail.get_thread":
+            return {"thread": self.service.get_thread(params["thread_id"])}
+        if capability == "gmail.list_threads":
+            threads = self.service.list_threads(
+                params.get("query") or "", int(params.get("max_results") or 20)
+            )
+            return {
+                "query": params.get("query") or "",
+                "threads": [
+                    {"id": thread.id, "snippet": thread.body_text} for thread in threads
+                ],
+            }
+        if capability == "gmail.reply_to_thread":
+            sent = self.service.reply(
+                params["message_id"], message_from_dict(params.get("message") or {})
+            )
+            return {"message_id": sent.id, "subject": sent.subject}
+        if capability == "gmail.list_attachments":
+            attachments = self.service.list_attachments(params["message_id"])
+            return {
+                "message_id": params["message_id"],
+                "attachments": [
+                    {
+                        "filename": item.filename,
+                        "content_type": item.content_type,
+                        "size": item.size,
+                        "content_id": item.content_id,
+                    }
+                    for item in attachments
+                ],
+            }
+        if capability == "gmail.get_attachment":
+            return {
+                "message_id": params["message_id"],
+                "attachment": self.service.get_attachment(
+                    params["message_id"], params["attachment_id"]
+                ),
+            }
         raise CapabilityUnavailableError(f"unsupported capability: {capability}")
+
+    def _health(self) -> dict[str, Any]:
+        health = self.health_check()
+        return {
+            "integration": "gmail",
+            "status": health.status.value,
+            "configured": health.is_healthy,
+            "message": health.message,
+        }
 
     def connect(self) -> None:
         self.authenticate()
@@ -165,6 +250,14 @@ class GmailProvider(EmailConnector):
     def create_draft(self, message: EmailMessage) -> EmailMessage: return self.service.create_draft(message)
     def send_message(self, message: EmailMessage) -> EmailMessage: return self.service.send_message(message)
     def reply(self, message_id: str, message: EmailMessage) -> EmailMessage: return self.service.reply(message_id, message)
+    def list_threads(self, query: str = "", max_results: int = 20) -> list[EmailMessage]:
+        return self.service.list_threads(query, max_results)
+    def get_thread(self, thread_id: str) -> dict[str, Any]:
+        return self.service.get_thread(thread_id)
+    def list_attachments(self, message_id: str) -> list[AttachmentMetadata]:
+        return self.service.list_attachments(message_id)
+    def get_attachment(self, message_id: str, attachment_id: str) -> dict[str, Any]:
+        return self.service.get_attachment(message_id, attachment_id)
 
     def _search(self, query: str) -> list[dict[str, Any]]:
         result = self.search_messages(query)
