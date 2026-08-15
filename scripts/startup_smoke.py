@@ -36,6 +36,11 @@ _DB_PATH = _TMP_DIR / "goalos.db"
 os.environ["GOALOS_DATABASE_URL"] = f"sqlite:///{_DB_PATH}"
 os.environ.setdefault("GOALOS_OPENWEBUI_API_KEY", "smoke-test-key")
 os.environ.setdefault("GOALOS_LOG_LEVEL", "WARNING")
+# Integration checks below must stay hermetic: force credential-backed
+# integrations into their honest Not Configured state.
+os.environ.pop("GOALOS_TWENTY_BASE_URL", None)
+os.environ.pop("GOALOS_TWENTY_API_KEY", None)
+os.environ.pop("GOALOS_SEARCH_PROVIDER", None)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -86,6 +91,7 @@ def main() -> int:
             "/api/v1/objectives",
             "/api/v1/projects",
             "/api/v1/tasks",
+            "/api/v1/integrations",
             "/api/v1/ai/chat",
             "/v1/chat/completions",
             "/v1/models",
@@ -142,6 +148,42 @@ def main() -> int:
                   .get("message", {}).get("content"))
         check("POST /v1/chat/completions without LLM is graceful",
               ok, f"status={r.status_code} body={r.text[:200]}")
+
+        # --- Integration execution foundation ------------------------
+        r = client.get("/api/v1/integrations")
+        body = r.json() if r.status_code == 200 else {}
+        check("GET /api/v1/integrations",
+              r.status_code == 200 and body.get("total", 0) >= 9,
+              f"status={r.status_code} body={r.text[:160]}")
+        web = next(
+            (item for item in body.get("integrations", []) if item.get("name") == "web"),
+            {},
+        )
+        check("integration registry exposes type/enabled/capabilities",
+              web.get("integration_type") == "web"
+              and web.get("enabled") is True
+              and "web.search" in web.get("capabilities", []),
+              f"web={web}")
+
+        # Health/test on an unconfigured integration is honest.
+        r = client.post("/api/v1/integrations/twenty/test")
+        check("POST /api/v1/integrations/twenty/test -> Not Configured",
+              r.status_code == 200 and r.json().get("status") == "Not Configured",
+              f"status={r.status_code} body={r.text[:160]}")
+
+        # Executing an unconfigured integration reports INTEGRATION_NOT_CONFIGURED,
+        # never a fake success, and needs no network.
+        r = client.post(
+            "/api/v1/integrations/twenty/execute",
+            json={
+                "capability": "twenty.search_people",
+                "permissions": ["READ_CRM"],
+            },
+        )
+        check("POST /api/v1/integrations/twenty/execute honest failure",
+              r.status_code == 200
+              and r.json().get("status") == "INTEGRATION_NOT_CONFIGURED",
+              f"status={r.status_code} body={r.text[:200]}")
 
     shutil.rmtree(_TMP_DIR, ignore_errors=True)
 

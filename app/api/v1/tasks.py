@@ -9,10 +9,12 @@ from app.db.session import get_db
 from app.repositories.task_repository import TaskRepository
 from app.schemas.task import (
     TaskCreateRequest,
+    TaskExecuteRequest,
     TaskResponse,
     TaskSummaryResponse,
     TaskUpdateRequest,
 )
+from app.services.integration_service import IntegrationService
 from app.services.task_service import TaskService
 
 router = APIRouter()
@@ -21,6 +23,10 @@ router = APIRouter()
 def _get_service(db=Depends(get_db)) -> TaskService:
     repo = TaskRepository(db)
     return TaskService(repo)
+
+
+def _get_integration_service(db=Depends(get_db)) -> IntegrationService:
+    return IntegrationService(db)
 
 
 @router.get("", response_model=List[TaskResponse])
@@ -71,6 +77,37 @@ def list_tasks_by_project(project_id: UUID, service: TaskService = Depends(_get_
 @router.get("/{task_id}/summary", response_model=TaskSummaryResponse)
 def get_task_summary(task_id: UUID, service: TaskService = Depends(_get_service)):
     result = service.summary(task_id)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    return result
+
+
+@router.post("/{task_id}/integrations/execute")
+def execute_task_integration(
+    task_id: UUID,
+    request: TaskExecuteRequest,
+    service: TaskService = Depends(_get_service),
+    integration_service: IntegrationService = Depends(_get_integration_service),
+):
+    """Execute the integration a task requires.
+
+    The task declares its integration through ``required_integration`` /
+    ``required_capability``. The integration runs through the existing
+    connector, the run is persisted as a runtime execution record, and
+    the task's status/result are updated. Returns 400 when the task does
+    not declare an integration.
+    """
+    integration_service.sync()
+    try:
+        result = service.execute_integration(
+            task_id,
+            request.params,
+            request.permissions,
+            integration_service,
+            capability=request.capability,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return result

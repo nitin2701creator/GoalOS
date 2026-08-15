@@ -3,6 +3,7 @@ from .capability import Capability, CapabilityStatus
 from .event import EventRecord, EventStatus
 from .execution import Execution, ExecutionStatus
 from .goal import Goal, GoalStatus
+from .integration import Integration
 from .objective import Objective
 from .project import Project, ProjectStatus
 from .runtime_execution import RuntimeExecution, RuntimeExecutionStatus
@@ -19,6 +20,7 @@ __all__ = [
     "Execution",
     "ExecutionStatus",
     "Goal",
+    "Integration",
     "GoalStatus",
     "Objective",
     "Project",

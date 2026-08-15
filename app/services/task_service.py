@@ -4,9 +4,12 @@ Task business service.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date
+from typing import Any
 
+from app.agents.permissions import Permission
 from app.db.models.task import Task
 from app.repositories.task_repository import TaskRepository
 from app.schemas.task import (
@@ -15,6 +18,7 @@ from app.schemas.task import (
     TaskSummaryResponse,
     TaskUpdateRequest,
 )
+from app.services.integration_service import IntegrationService
 
 
 class TaskService:
@@ -85,3 +89,57 @@ class TaskService:
         if not self.repository.project_exists(project_id):
             return None
         return [self._to_response(task) for task in self.repository.list_by_project(project_id)]
+
+    # ------------------------------------------------------------------
+    # Integration execution
+    # ------------------------------------------------------------------
+    def execute_integration(
+        self,
+        task_id: uuid.UUID,
+        params: dict[str, Any] | None,
+        permissions: set[Permission] | list[Permission] | None,
+        integration_service: IntegrationService,
+        capability: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Execute the integration a task requires, persisting the result.
+
+        The task identifies its integration through
+        ``required_integration``/``required_capability`` (requirement: a
+        task must be able to declare which integration/capability it
+        needs). The integration runs through the existing connector, the
+        run is persisted as a runtime execution record, and the task's
+        status/result are updated from the structured outcome.
+
+        Returns ``None`` when the task does not exist; raises
+        ``ValueError`` when the task does not declare an integration.
+        """
+        task = self.repository.get(task_id)
+        if task is None:
+            return None
+        integration_name = task.required_integration
+        capability_name = capability or task.required_capability
+        if not integration_name or not capability_name:
+            raise ValueError(
+                "task does not declare a required integration/capability "
+                "(set required_integration and required_capability)"
+            )
+        response = integration_service.execute(
+            integration_name,
+            capability_name,
+            params,
+            permissions,
+        )
+        status = "Completed" if response.status == "OK" else "Failed"
+        result_text = (
+            json.dumps(response.result)
+            if response.result is not None
+            else (response.error or "")
+        )
+        self.repository.update(
+            task,
+            {"status": status, "result": result_text or None},
+        )
+        return {
+            "task": self._to_response(task),
+            "execution": response,
+        }

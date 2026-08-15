@@ -17,7 +17,10 @@ from app.control_loop.scheduler_worker import (
 from app.dashboard.dashboard_router import router as dashboard_router
 from app.db.base import Base
 from app.db.schema import ensure_schema
-from app.db.session import engine, get_db
+from app.db.session import SessionLocal, engine, get_db
+from app.services.integration_service import IntegrationService
+
+logger = logging.getLogger(__name__)
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
@@ -89,6 +92,14 @@ async def on_startup():
     # Apply idempotent schema additions to pre-existing databases
     # (create_all never adds columns to existing tables).
     ensure_schema(engine)
+    # Persist the integration registry (name/type/enabled/capabilities/
+    # config references) from the connector registry. Idempotent and
+    # non-fatal: a registry sync failure must never block startup.
+    try:
+        with SessionLocal() as db:
+            IntegrationService(db).sync()
+    except Exception as exc:  # noqa: BLE001 - registry sync must not block startup
+        logger.warning("integration registry sync failed at startup: %s", exc)
     # Start the persisted scheduler worker (one loop per process; the
     # worker refuses duplicates and claims due runs atomically in the DB,
     # so restarts and multiple uvicorn workers stay safe).

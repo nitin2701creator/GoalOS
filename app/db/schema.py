@@ -26,6 +26,16 @@ _ADDITIONS: tuple[tuple[str, str, str], ...] = (
         "plan",
         "ALTER TABLE workflows ADD COLUMN plan JSON",
     ),
+    (
+        "tasks",
+        "required_integration",
+        "ALTER TABLE tasks ADD COLUMN required_integration VARCHAR(120)",
+    ),
+    (
+        "tasks",
+        "required_capability",
+        "ALTER TABLE tasks ADD COLUMN required_capability VARCHAR(200)",
+    ),
 )
 
 

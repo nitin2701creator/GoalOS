@@ -55,6 +55,20 @@ class RuntimeExecutionRepository:
         )
         return self.db.scalars(statement).all()
 
+    def list_by_provider(self, provider: str) -> Sequence[RuntimeExecution]:
+        """Return executions dispatched through one integration provider.
+
+        Integration executions persist ``provider`` as the integration
+        registry name, so history for an integration is a simple provider
+        filter over the same ``runtime_executions`` audit trail.
+        """
+        statement = (
+            select(RuntimeExecution)
+            .where(RuntimeExecution.provider == provider)
+            .order_by(RuntimeExecution.created_at.desc())
+        )
+        return self.db.scalars(statement).all()
+
     def update(self, execution: RuntimeExecution, updates: dict[str, Any]) -> RuntimeExecution:
         for field, value in updates.items():
             setattr(execution, field, value)

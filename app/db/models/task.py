@@ -31,6 +31,10 @@ class Task(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     assigned_agent: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    #: Integration this task executes (registry name, e.g. ``web``).
+    required_integration: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    #: Capability this task executes through the integration (e.g. ``web.search``).
+    required_capability: Mapped[str | None] = mapped_column(String(200), nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="Draft")
     priority: Mapped[str] = mapped_column(String(50), nullable=False)
     workflow_id: Mapped[uuid.UUID | None] = mapped_column(

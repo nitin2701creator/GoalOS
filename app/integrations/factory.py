@@ -46,6 +46,26 @@ _CAPABILITY_INTEGRATION_ALIASES: dict[str, str] = {
     "meta": "meta_ads",
 }
 
+#: Registry name → functional integration type (web, email, crm, ...).
+#: Used by the persisted integration registry so every registered
+#: connector is represented as an executable integration with a type.
+INTEGRATION_TYPES: dict[str, str] = {
+    "web": "web",
+    "website": "web",
+    "gmail": "email",
+    "woocommerce": "commerce",
+    "google_analytics": "analytics",
+    "meta_ads": "advertising",
+    "scheduler": "scheduler",
+    "twenty": "crm",
+    "social": "social",
+}
+
+
+def integration_type_for(name: str) -> str:
+    """Return the functional type for a registered integration name."""
+    return INTEGRATION_TYPES.get(name.strip(), "integration")
+
 
 def integration_for_capability(capability_name: str) -> str:
     """Map a ``system.action`` capability to its registry integration name."""
