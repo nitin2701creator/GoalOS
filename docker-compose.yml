@@ -76,6 +76,8 @@ services:
       GOALOS_GA4_PRIVATE_KEY: "${GOALOS_GA4_PRIVATE_KEY:-}"
       GOALOS_META_ACCESS_TOKEN: "${GOALOS_META_ACCESS_TOKEN:-}"
       GOALOS_META_AD_ACCOUNT_ID: "${GOALOS_META_AD_ACCOUNT_ID:-}"
+      N8N_BASE_URL: "${N8N_BASE_URL:-}"
+      N8N_API_KEY: "${N8N_API_KEY:-}"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
       interval: 30s

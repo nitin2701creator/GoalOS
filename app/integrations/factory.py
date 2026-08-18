@@ -19,6 +19,7 @@ from app.integrations.google_drive import GoogleDriveConnector
 from app.integrations.http_client import HttpClient
 from app.integrations.linkedin import LinkedInConnector
 from app.integrations.meta_ads import MetaAdsConnector
+from app.integrations.n8n import N8NConnector
 from app.integrations.scheduler import SchedulerConnector
 from app.integrations.social import SocialConnector
 from app.integrations.twenty import TwentyConnector
@@ -40,6 +41,7 @@ SUPPORTED_INTEGRATIONS: tuple[str, ...] = (
     "twenty",
     "linkedin",
     "social",
+    "n8n",
 )
 
 #: Capability-prefix → registry-name aliases. Connector capability names
@@ -69,6 +71,7 @@ INTEGRATION_TYPES: dict[str, str] = {
     "twenty": "crm",
     "linkedin": "social",
     "social": "social",
+    "n8n": "automation",
 }
 
 
@@ -121,6 +124,7 @@ def build_default_registry(
     registry.register(TwentyConnector(client=client or HttpClient()))
     registry.register(LinkedInConnector(client=client or HttpClient()))
     registry.register(SocialConnector())
+    registry.register(N8NConnector(client=client or HttpClient()))
     return registry
 
 

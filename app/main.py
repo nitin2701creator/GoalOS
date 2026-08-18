@@ -18,6 +18,7 @@ from app.dashboard.dashboard_router import router as dashboard_router
 from app.db.base import Base
 from app.db.schema import ensure_schema
 from app.db.session import SessionLocal, engine, get_db
+from app.services.google_oauth_service import GoogleOAuthService
 from app.services.integration_service import IntegrationService
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,15 @@ async def on_startup():
             IntegrationService(db).sync()
     except Exception as exc:  # noqa: BLE001 - registry sync must not block startup
         logger.warning("integration registry sync failed at startup: %s", exc)
+    # Hydrate a refresh token granted through the Google OAuth web flow
+    # into the process environment so the Gmail / Calendar / Drive
+    # connectors (which read configuration from env vars) stay configured
+    # across restarts. Non-fatal: without a stored token the connectors
+    # simply report Not Configured, exactly as before.
+    try:
+        GoogleOAuthService(SessionLocal()).load_into_environment()
+    except Exception as exc:  # noqa: BLE001 - hydration must not block startup
+        logger.warning("google oauth credential hydration failed at startup: %s", exc)
     # Start the persisted scheduler worker (one loop per process; the
     # worker refuses duplicates and claims due runs atomically in the DB,
     # so restarts and multiple uvicorn workers stay safe).

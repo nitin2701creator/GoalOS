@@ -3,6 +3,7 @@ from .capability import Capability, CapabilityStatus
 from .event import EventRecord, EventStatus
 from .execution import Execution, ExecutionStatus
 from .goal import Goal, GoalStatus
+from .google_oauth_credential import GoogleOAuthCredential
 from .integration import Integration
 from .objective import Objective
 from .project import Project, ProjectStatus
@@ -20,6 +21,7 @@ __all__ = [
     "Execution",
     "ExecutionStatus",
     "Goal",
+    "GoogleOAuthCredential",
     "Integration",
     "GoalStatus",
     "Objective",

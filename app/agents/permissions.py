@@ -35,6 +35,8 @@ class Permission(StrEnum):
     WRITE_DRIVE = "WRITE_DRIVE"
     READ_SOCIAL = "READ_SOCIAL"
     PUBLISH_SOCIAL = "PUBLISH_SOCIAL"
+    READ_AUTOMATION = "READ_AUTOMATION"
+    EXECUTE_AUTOMATION = "EXECUTE_AUTOMATION"
 
 
 #: Permissions that can change external state or run code. These are never
@@ -52,6 +54,7 @@ DANGEROUS_PERMISSIONS = frozenset(
         Permission.WRITE_CALENDAR,
         Permission.WRITE_DRIVE,
         Permission.PUBLISH_SOCIAL,
+        Permission.EXECUTE_AUTOMATION,
     }
 )
 
@@ -77,6 +80,8 @@ PERMISSION_ACTIONS: dict[Permission, str] = {
     Permission.WRITE_DRIVE: "write_drive",
     Permission.READ_SOCIAL: "read_social",
     Permission.PUBLISH_SOCIAL: "publish_social",
+    Permission.READ_AUTOMATION: "read_automation",
+    Permission.EXECUTE_AUTOMATION: "execute_automation",
 }
 
 

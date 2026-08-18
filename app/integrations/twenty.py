@@ -8,8 +8,9 @@ workspaces (``https://{your-domain}``); custom-object endpoints are never
 assumed — reads/writes target the standard core objects (people, companies,
 opportunities, tasks, notes) with the caller-supplied field values.
 
-Configuration accepts ``TWENTY_API_URL``/``TWENTY_API_KEY`` with the legacy
-``GOALOS_TWENTY_BASE_URL``/``GOALOS_TWENTY_API_KEY`` names as fallbacks.
+Configuration accepts ``TWENTY_BASE_URL`` (or ``TWENTY_API_URL``)/
+``TWENTY_API_KEY`` with the legacy ``GOALOS_TWENTY_BASE_URL``/
+``GOALOS_TWENTY_API_KEY`` names as fallbacks.
 
 Honesty contract:
 
@@ -62,6 +63,7 @@ _LIST_CAPABILITIES: dict[str, str] = {
     "twenty.list_people": "people",
     "twenty.list_companies": "companies",
     "twenty.list_opportunities": "opportunities",
+    "twenty.list_tasks": "tasks",
 }
 
 #: Capability → object slug for single-record get operations.
@@ -69,6 +71,7 @@ _GET_CAPABILITIES: dict[str, str] = {
     "twenty.get_person": "people",
     "twenty.get_company": "companies",
     "twenty.get_opportunity": "opportunities",
+    "twenty.get_task": "tasks",
 }
 
 #: Standard core-object fields searched by ``query`` (not custom fields —
@@ -90,9 +93,11 @@ _READ_CAPABILITIES = frozenset(
         "twenty.list_people",
         "twenty.list_companies",
         "twenty.list_opportunities",
+        "twenty.list_tasks",
         "twenty.get_person",
         "twenty.get_company",
         "twenty.get_opportunity",
+        "twenty.get_task",
         "twenty.get_record",
     }
 )
@@ -102,6 +107,9 @@ class TwentyConnector(IntegrationConnector):
     """Twenty CRM connector for people, companies, opportunities, tasks, notes."""
 
     required_env_vars: tuple[str, ...] = (
+        "TWENTY_BASE_URL",
+        "TWENTY_API_URL",
+        "TWENTY_API_KEY",
         "GOALOS_TWENTY_BASE_URL",
         "GOALOS_TWENTY_API_KEY",
     )
@@ -132,6 +140,7 @@ class TwentyConnector(IntegrationConnector):
         self.client = client or HttpClient()
         self.base_url = (
             base_url
+            or self._env("TWENTY_BASE_URL")
             or self._env("TWENTY_API_URL")
             or self._env("GOALOS_TWENTY_BASE_URL")
             or ""
@@ -161,6 +170,8 @@ class TwentyConnector(IntegrationConnector):
             "twenty.search_opportunities",
             "twenty.create_opportunity",
             "twenty.update_opportunity",
+            "twenty.list_tasks",
+            "twenty.get_task",
             "twenty.create_task",
             "twenty.update_task",
             "twenty.create_note",
@@ -172,7 +183,7 @@ class TwentyConnector(IntegrationConnector):
 
         missing: list[str] = []
         if not self.base_url:
-            missing.append("GOALOS_TWENTY_BASE_URL (or TWENTY_API_URL)")
+            missing.append("GOALOS_TWENTY_BASE_URL (or TWENTY_BASE_URL/TWENTY_API_URL)")
         if not self.api_key:
             missing.append("GOALOS_TWENTY_API_KEY (or TWENTY_API_KEY)")
         if missing:

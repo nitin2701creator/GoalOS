@@ -29,6 +29,15 @@ PEOPLE_LIST = {
 }
 
 
+TASK_LIST = {
+    "data": [
+        {"id": "t1", "title": "Follow up with supplier"},
+        {"id": "t2", "title": "Review quotation"},
+    ],
+    "totalCount": 2,
+}
+
+
 def _opener():
     def opener(request, timeout=None) -> FakeResponse:
         url = str(getattr(request, "full_url", request))
@@ -36,6 +45,10 @@ def _opener():
         opener.calls.append((method, url))
         if url.endswith("/rest/people/p1"):
             return FakeResponse(json.dumps({"data": PEOPLE_LIST["data"][0]}).encode(), url, content_type="application/json")
+        if url.endswith("/rest/tasks/t1"):
+            return FakeResponse(json.dumps({"data": TASK_LIST["data"][0]}).encode(), url, content_type="application/json")
+        if "/rest/tasks" in url:
+            return FakeResponse(json.dumps(TASK_LIST).encode(), url, content_type="application/json")
         return FakeResponse(json.dumps(PEOPLE_LIST).encode(), url, content_type="application/json")
 
     opener.calls = []
@@ -109,12 +122,64 @@ def test_twenty_health_capability() -> None:
 def test_twenty_env_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GOALOS_TWENTY_BASE_URL", raising=False)
     monkeypatch.delenv("GOALOS_TWENTY_API_KEY", raising=False)
+    monkeypatch.delenv("TWENTY_BASE_URL", raising=False)
     monkeypatch.setenv("TWENTY_API_URL", "https://selfhosted.twenty.test")
     monkeypatch.setenv("TWENTY_API_KEY", "alias-key")
     connector = TwentyConnector(client=HttpClient())
     assert connector.is_configured
     assert connector.base_url == "https://selfhosted.twenty.test"
     assert connector.api_key == "alias-key"
+
+
+def test_twenty_base_url_env_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TWENTY_BASE_URL (the canonical name) drives the connector too."""
+    monkeypatch.delenv("GOALOS_TWENTY_BASE_URL", raising=False)
+    monkeypatch.delenv("GOALOS_TWENTY_API_KEY", raising=False)
+    monkeypatch.delenv("TWENTY_API_URL", raising=False)
+    monkeypatch.delenv("TWENTY_API_KEY", raising=False)
+    monkeypatch.setenv("TWENTY_BASE_URL", "https://base-url.twenty.test")
+    monkeypatch.setenv("TWENTY_API_KEY", "base-url-key")
+    connector = TwentyConnector(client=HttpClient())
+    assert connector.is_configured
+    assert connector.base_url == "https://base-url.twenty.test"
+    assert connector.api_key == "base-url-key"
+
+
+def test_twenty_list_tasks() -> None:
+    opener = _opener()
+    connector = _connector(opener)
+
+    result = connector.execute(
+        "twenty.list_tasks", {"limit": 10}, permissions={Permission.READ_CRM}
+    )
+    assert result["object"] == "tasks"
+    assert result["total"] == 2
+    assert result["items"][0]["title"] == "Follow up with supplier"
+    method, url = opener.calls[0]
+    assert method == "GET"
+    assert url.endswith("/rest/tasks") or "/rest/tasks?" in url
+
+
+def test_twenty_get_task() -> None:
+    opener = _opener()
+    connector = _connector(opener)
+
+    result = connector.execute(
+        "twenty.get_task", {"id": "t1"}, permissions={Permission.READ_CRM}
+    )
+    assert result["object"] == "tasks"
+    assert result["id"] == "t1"
+    assert result["data"]["title"] == "Follow up with supplier"
+    _, url = opener.calls[0]
+    assert url.endswith("/rest/tasks/t1")
+
+
+def test_twenty_task_reads_require_read_permission() -> None:
+    connector = _connector(_opener())
+    with pytest.raises(PermissionDeniedError, match="READ_CRM"):
+        connector.execute("twenty.list_tasks", {}, permissions={Permission.READ_WEBSITE})
+    with pytest.raises(PermissionDeniedError, match="READ_CRM"):
+        connector.execute("twenty.get_task", {"id": "t1"}, permissions={Permission.READ_WEBSITE})
 
 
 def test_twenty_legacy_env_still_works(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -128,6 +193,7 @@ def test_twenty_legacy_env_still_works(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_twenty_health_check_still_not_configured_without_any_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TWENTY_BASE_URL", raising=False)
     monkeypatch.delenv("TWENTY_API_URL", raising=False)
     monkeypatch.delenv("TWENTY_API_KEY", raising=False)
     monkeypatch.delenv("GOALOS_TWENTY_BASE_URL", raising=False)

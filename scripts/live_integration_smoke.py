@@ -1,4 +1,4 @@
-"""Live integration smoke test for GoalOS's six core real-world integrations.
+"""Live integration smoke test for GoalOS's seven core real-world integrations.
 
 For each integration the script performs ONE harmless authenticated read:
 
@@ -8,6 +8,7 @@ For each integration the script performs ONE harmless authenticated read:
 - Twenty:     list people, limit 1 (never creates records)
 - WooCommerce: list products, per_page 1 (never creates orders)
 - LinkedIn:   read organization metadata (never publishes)
+- n8n:        list workflows, limit 1 (never triggers a workflow)
 
 Each integration prints exactly one status line:
 
@@ -42,6 +43,7 @@ from app.integrations.exceptions import (
 from app.integrations.google_calendar import GoogleCalendarConnector
 from app.integrations.google_drive import GoogleDriveConnector
 from app.integrations.linkedin import LinkedInConnector
+from app.integrations.n8n import N8NConnector
 from app.integrations.twenty import TwentyConnector
 from app.integrations.woocommerce import WooCommerceConnector
 
@@ -82,6 +84,12 @@ _CHECKS: list[tuple[str, object, str, dict]] = [
         LinkedInConnector(),
         "linkedin.get_organization",
         {},
+    ),
+    (
+        "n8n",
+        N8NConnector(),
+        "n8n.list_workflows",
+        {"limit": 1},
     ),
 ]
 

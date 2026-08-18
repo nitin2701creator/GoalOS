@@ -238,6 +238,30 @@ def test_twenty_execution_result_persisted_via_runtime(
         session.close()
 
 
+def test_twenty_list_tasks_persisted_via_runtime(
+    session_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """twenty.list_tasks resolves through capability -> registry -> runtime."""
+    opener = TwentyFakeOpener()
+    monkeypatch.setattr("app.integrations.http_client.urlopen", opener)
+    session = session_factory()
+    try:
+        runtime = _runtime(session, opener)
+        result = runtime.execute(
+            "twenty_list_tasks",
+            {"limit": 5},
+            {Permission.READ_CRM},
+        )
+        assert result.status.value == "succeeded"
+        assert result.output["object"] == "tasks"
+        assert result.output["total"] == 2
+        persisted = runtime.get(result.id)
+        assert persisted is not None
+        assert persisted.provider == "twenty"
+    finally:
+        session.close()
+
+
 def test_twenty_write_blocked_without_approved_workflow(
     session_factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:

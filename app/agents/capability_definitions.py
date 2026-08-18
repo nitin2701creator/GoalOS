@@ -492,6 +492,26 @@ _TWENTY_CAPABILITIES: dict[str, CapabilityDefinition] = {
         keywords=("update task", "complete task", "mark task done"),
         requires_approval=True,
     ),
+    "twenty_list_tasks": _integration_definition(
+        name="twenty_list_tasks",
+        description="List Twenty CRM tasks with optional query/filter.",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.list_tasks",
+        permissions=(Permission.READ_CRM,),
+        execution_capability=None,
+        keywords=("list tasks", "tasks", "my tasks", "crm tasks"),
+    ),
+    "twenty_get_task": _integration_definition(
+        name="twenty_get_task",
+        description="Fetch one Twenty CRM task by id.",
+        category="crm",
+        provider="twenty",
+        implementation="twenty.get_task",
+        permissions=(Permission.READ_CRM,),
+        execution_capability=None,
+        keywords=("get task", "task by id", "task details"),
+    ),
     "twenty_create_note": _integration_definition(
         name="twenty_create_note",
         description="Create a Twenty CRM note (requires WRITE_CRM + approval).",
@@ -515,6 +535,68 @@ _TWENTY_CAPABILITIES: dict[str, CapabilityDefinition] = {
     ),
 }
 BUILTIN_CAPABILITIES.update(_TWENTY_CAPABILITIES)
+
+#: n8n workflow-automation capabilities (integration-backed through
+#: N8NConnector). Reads require READ_AUTOMATION; running a workflow
+#: requires EXECUTE_AUTOMATION (dangerous, never implicit) and an
+#: approved workflow context.
+_N8N_CAPABILITIES: dict[str, CapabilityDefinition] = {
+    "n8n_health": _integration_definition(
+        name="n8n_health",
+        description="Report n8n configuration readiness.",
+        category="automation",
+        provider="n8n",
+        implementation="n8n.health",
+        permissions=(Permission.READ_AUTOMATION,),
+        execution_capability=None,
+        keywords=("n8n", "workflow", "automation", "workflow health"),
+    ),
+    "n8n_list_workflows": _integration_definition(
+        name="n8n_list_workflows",
+        description="List n8n workflows with optional filters.",
+        category="automation",
+        provider="n8n",
+        implementation="n8n.list_workflows",
+        permissions=(Permission.READ_AUTOMATION,),
+        execution_capability=None,
+        keywords=("n8n workflows", "list workflows", "automation workflows", "workflow list"),
+    ),
+    "n8n_get_workflow": _integration_definition(
+        name="n8n_get_workflow",
+        description="Fetch one n8n workflow by id.",
+        category="automation",
+        provider="n8n",
+        implementation="n8n.get_workflow",
+        permissions=(Permission.READ_AUTOMATION,),
+        execution_capability=None,
+        keywords=("n8n workflow by id", "get workflow", "workflow details"),
+    ),
+    "n8n_run_workflow": _integration_definition(
+        name="n8n_run_workflow",
+        description=(
+            "Trigger an n8n workflow execution and return its result "
+            "(requires EXECUTE_AUTOMATION + approval)."
+        ),
+        category="automation",
+        provider="n8n",
+        implementation="n8n.run_workflow",
+        permissions=(Permission.EXECUTE_AUTOMATION,),
+        execution_capability=None,
+        keywords=("run workflow", "trigger workflow", "execute workflow", "start automation"),
+        requires_approval=True,
+    ),
+    "n8n_get_execution": _integration_definition(
+        name="n8n_get_execution",
+        description="Fetch one n8n workflow execution by id.",
+        category="automation",
+        provider="n8n",
+        implementation="n8n.get_execution",
+        permissions=(Permission.READ_AUTOMATION,),
+        execution_capability=None,
+        keywords=("execution result", "workflow execution", "get execution"),
+    ),
+}
+BUILTIN_CAPABILITIES.update(_N8N_CAPABILITIES)
 
 #: Social media capabilities (contract-only until a provider is wired).
 #: Every capability is registered so resolution finds it; availability is
