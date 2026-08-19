@@ -1,14 +1,20 @@
-"""Webhook ingestion API for external events (currently Twenty CRM).
+"""Webhook ingestion API for external events.
 
-``POST /api/v1/webhooks/twenty`` receives Twenty record-created/updated/
-deleted deliveries, validates the HMAC-SHA256 signature against
-``GOALOS_TWENTY_WEBHOOK_SECRET``, protects against replay, persists every
-event as a durable record, and acknowledges with HTTP 2xx only after a valid
-receipt. Invalid signatures and out-of-tolerance timestamps are rejected
-(and persisted as rejected events for audit). The endpoint is authenticated
-by the webhook signature itself — no bearer key is required from Twenty.
+Inbound webhook endpoints:
 
-``GET /api/v1/webhooks/events`` lists persisted events for operations.
+- ``POST /api/v1/webhooks/twenty`` — Twenty CRM record events
+  (HMAC-SHA256 over ``{timestamp}:{payload}`` with
+  ``GOALOS_TWENTY_WEBHOOK_SECRET``).
+
+- ``POST /api/v1/webhooks/woocommerce/order`` — WooCommerce native order
+  webhooks (HMAC-SHA256 with ``GOALOS_WOOCOMMERCE_WEBHOOK_SECRET``).
+  Supports order.created, order.updated, order.deleted.
+
+- ``POST /api/v1/webhooks/abandoned-cart`` — Abandoned-cart Lite events
+  delivered by the WordPress bridge, authenticated with a bearer token
+  (``GOALOS_ABANDONED_CART_WEBHOOK_SECRET``).
+
+- ``GET /api/v1/webhooks/events`` — Lists persisted events for operations.
 """
 
 from __future__ import annotations
@@ -19,14 +25,29 @@ from fastapi.responses import JSONResponse
 from app.db.session import get_db
 from app.repositories.event_repository import EventRepository
 from app.schemas.event import EventRecordResponse
+from app.schemas.woocommerce import (
+    WebhookIngestResult,
+    WooCommerceAbandonedCartResponse,
+    WooCommerceOrderResponse,
+)
 from app.services.webhook_service import (
     WebhookNotConfiguredError,
     WebhookRejectedError,
     WebhookService,
 )
+from app.services.woocommerce_webhook_service import (
+    WebhookAuthError,
+    WebhookPayloadError,
+    WooCommerceWebhookError,
+    WooCommerceWebhookService,
+)
 
 router = APIRouter()
 
+
+# --------------------------------------------------------------------- #
+# Twenty CRM                                                             #
+# --------------------------------------------------------------------- #
 
 def _get_service(db=Depends(get_db)) -> WebhookService:
     """Compose the webhook service per request (existing conventions)."""
@@ -61,7 +82,6 @@ async def ingest_twenty_webhook(
         ) from exc
 
     if not result.accepted:
-        # Duplicate delivery: safe idempotent acknowledgment (200).
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=result.model_dump(mode="json"),
@@ -71,6 +91,120 @@ async def ingest_twenty_webhook(
         content=result.model_dump(mode="json"),
     )
 
+
+# --------------------------------------------------------------------- #
+# WooCommerce order webhooks                                             #
+# --------------------------------------------------------------------- #
+
+def _get_woo_service(db=Depends(get_db)) -> WooCommerceWebhookService:
+    """Compose the WooCommerce webhook service per request."""
+    return WooCommerceWebhookService(db)
+
+
+@router.post(
+    "/webhooks/woocommerce/order",
+    summary="Ingest a WooCommerce order webhook event",
+    description=(
+        "Validate the X-WC-Webhook-Signature (HMAC-SHA256 of the raw body "
+        "with GOALOS_WOOCOMMERCE_WEBHOOK_SECRET), deduplicate by delivery "
+        "ID, upsert the WooCommerce order, and persist the event record. "
+        "Returns HTTP 202 for accepted events, 200 for safe idempotent "
+        "duplicates, 401 for invalid signatures, and 503 when the webhook "
+        "secret is not configured."
+    ),
+)
+async def ingest_woo_order_webhook(
+    request: Request,
+    service: WooCommerceWebhookService = Depends(_get_woo_service),
+):
+    raw_body = await request.body()
+    try:
+        result = service.ingest_woo_order(raw_body, request.headers)
+    except WebhookAuthError as exc:
+        msg = str(exc)
+        if "not configured" in msg:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=msg
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=msg
+        ) from exc
+    except WebhookPayloadError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except WooCommerceWebhookError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+
+    status_code = (
+        status.HTTP_200_OK
+        if not result.accepted
+        else status.HTTP_202_ACCEPTED
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=result.model_dump(mode="json"),
+    )
+
+
+# --------------------------------------------------------------------- #
+# Abandoned-cart webhooks                                                #
+# --------------------------------------------------------------------- #
+
+@router.post(
+    "/webhooks/abandoned-cart",
+    summary="Ingest an abandoned-cart event from the WordPress bridge",
+    description=(
+        "Authenticate with a bearer token "
+        "(GOALOS_ABANDONED_CART_WEBHOOK_SECRET), deduplicate by a "
+        "deterministic event key (cart_id + email + timestamp), persist "
+        "the abandoned cart and its items, and acknowledge with HTTP 2xx. "
+        "Returns 202 for accepted events, 200 for safe idempotent "
+        "duplicates, 401 for invalid auth, and 503 when the secret is "
+        "not configured."
+    ),
+)
+async def ingest_abandoned_cart_webhook(
+    request: Request,
+    service: WooCommerceWebhookService = Depends(_get_woo_service),
+):
+    raw_body = await request.body()
+    try:
+        result = service.ingest_abandoned_cart(raw_body, request.headers)
+    except WebhookAuthError as exc:
+        msg = str(exc)
+        if "not configured" in msg:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=msg
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=msg
+        ) from exc
+    except WebhookPayloadError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except WooCommerceWebhookError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+
+    status_code = (
+        status.HTTP_200_OK
+        if not result.accepted
+        else status.HTTP_202_ACCEPTED
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=result.model_dump(mode="json"),
+    )
+
+
+# --------------------------------------------------------------------- #
+# Event listing (shared)                                                 #
+# --------------------------------------------------------------------- #
 
 @router.get(
     "/webhooks/events",
@@ -87,5 +221,58 @@ def list_webhook_events(
         "events": [
             EventRecordResponse.model_validate(event).model_dump(mode="json")
             for event in events
+        ],
+    }
+
+
+# --------------------------------------------------------------------- #
+# WooCommerce data listing endpoints                                     #
+# --------------------------------------------------------------------- #
+
+@router.get(
+    "/webhooks/woocommerce/orders",
+    summary="List ingested WooCommerce orders",
+)
+def list_woo_orders(
+    service: WooCommerceWebhookService = Depends(_get_woo_service),
+    limit: int = 50,
+    status_filter: str | None = None,
+):
+    """Return recently ingested WooCommerce orders (newest first)."""
+    from sqlalchemy import select
+    from app.db.models.woocommerce_order import WooCommerceOrder
+
+    statement = select(WooCommerceOrder).order_by(WooCommerceOrder.created_at.desc())
+    if status_filter:
+        statement = statement.where(WooCommerceOrder.status == status_filter)
+    orders = service.db.scalars(statement.limit(min(max(limit, 1), 500))).all()
+    return {
+        "total": len(orders),
+        "orders": [
+            WooCommerceOrderResponse.model_validate(o).model_dump(mode="json")
+            for o in orders
+        ],
+    }
+
+
+@router.get(
+    "/webhooks/abandoned-carts",
+    summary="List ingested abandoned carts",
+)
+def list_abandoned_carts(
+    service: WooCommerceWebhookService = Depends(_get_woo_service),
+    limit: int = 50,
+    status_filter: str | None = None,
+):
+    """Return recently ingested abandoned carts (newest first)."""
+    carts = service.cart_repo.list_carts(
+        limit=min(max(limit, 1), 500),
+        status=status_filter,
+    )
+    return {
+        "total": len(carts),
+        "carts": [
+            WooCommerceAbandonedCartResponse.model_validate(c).model_dump(mode="json")
+            for c in carts
         ],
     }

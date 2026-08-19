@@ -10,9 +10,12 @@ from .project import Project, ProjectStatus
 from .runtime_execution import RuntimeExecution, RuntimeExecutionStatus
 from .skill import Skill
 from .task import Task
+from .woocommerce_cart import AbandonedCartStatus, WooCommerceAbandonedCart, WooCommerceAbandonedCartItem
+from .woocommerce_order import WooCommerceOrder, WooCommerceOrderItem
 from .workflow import Workflow, WorkflowStatus
 
 __all__ = [
+    "AbandonedCartStatus",
     "Agent",
     "Capability",
     "CapabilityStatus",
@@ -31,6 +34,10 @@ __all__ = [
     "RuntimeExecutionStatus",
     "Skill",
     "Task",
+    "WooCommerceAbandonedCart",
+    "WooCommerceAbandonedCartItem",
+    "WooCommerceOrder",
+    "WooCommerceOrderItem",
     "Workflow",
     "WorkflowStatus",
 ]
