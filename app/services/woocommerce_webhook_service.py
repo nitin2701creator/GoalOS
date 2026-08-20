@@ -92,15 +92,13 @@ class WooCommerceWebhookService:
         self.order_repo = WooCommerceOrderRepository(db)
         self.cart_repo = WooCommerceCartRepository(db)
         self._woo_secret = (
-            woo_secret
-            or os.getenv("GOALOS_WOOCOMMERCE_WEBHOOK_SECRET")
-            or os.getenv("WOOCOMMERCE_WEBHOOK_SECRET")
-            or ""
+            (woo_secret or "").strip()
+            or os.getenv("GOALOS_WOOCOMMERCE_WEBHOOK_SECRET", "").strip()
+            or os.getenv("WOOCOMMERCE_WEBHOOK_SECRET", "").strip()
         )
         self._cart_secret = (
-            cart_secret
-            or os.getenv("GOALOS_ABANDONED_CART_WEBHOOK_SECRET")
-            or ""
+            (cart_secret or "").strip()
+            or os.getenv("GOALOS_ABANDONED_CART_WEBHOOK_SECRET", "").strip()
         )
 
     # ================================================================== #
@@ -299,8 +297,20 @@ class WooCommerceWebhookService:
                 hashlib.sha256,
             ).digest()
             expected = base64.b64encode(expected_bytes).decode()
-            return hmac_mod.compare_digest(expected, signature)
+            match = hmac_mod.compare_digest(expected, signature)
+            if not match:
+                logger.warning(
+                    "WooCommerce webhook signature mismatch — "
+                    "received sig starts=%s ends=%s (len=%d), "
+                    "computed sig starts=%s ends=%s (len=%d), "
+                    "secret len=%d, body len=%d",
+                    signature[:4], signature[-4:], len(signature),
+                    expected[:4], expected[-4:], len(expected),
+                    len(self._woo_secret), len(raw_body),
+                )
+            return match
         except Exception:
+            logger.exception("WooCommerce HMAC verification raised an exception")
             return False
 
     # ================================================================== #

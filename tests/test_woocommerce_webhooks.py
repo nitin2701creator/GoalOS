@@ -883,3 +883,138 @@ class TestHelperFunctions:
         eid1 = derive_cart_event_id("cart1", "a@b.com", "2026-01-01")
         eid2 = derive_cart_event_id("cart1", "c@d.com", "2026-01-01")
         assert eid1 != eid2
+
+
+# ============================================================================
+# Focused HMAC authentication tests
+# ============================================================================
+
+class TestHmacAuthentication:
+    """Targeted tests for WooCommerce HMAC-SHA256 webhook authentication."""
+
+    def test_valid_hmac_accepted(self, db):
+        """A correctly signed WooCommerce order webhook is accepted."""
+        svc = _make_service(db)
+        payload = _make_woo_order_payload(order_id=9001)
+        body = json.dumps(payload).encode()
+        headers = _make_woo_headers(body)
+
+        result = svc.ingest_woo_order(body, _fake_headers(headers))
+
+        assert result.accepted is True
+        assert result.status == "received"
+        assert result.source == "woocommerce"
+        assert result.record_id == "9001"
+
+    def test_invalid_hmac_rejected(self, db):
+        """A webhook with a wrong signature is rejected with 401."""
+        svc = _make_service(db)
+        payload = _make_woo_order_payload(order_id=9002)
+        body = json.dumps(payload).encode()
+        headers = _make_woo_headers(body, include_signature=False)
+        headers["X-WC-Webhook-Signature"] = _sign_woo(body, "wrong_secret")
+
+        with pytest.raises(WebhookAuthError, match="invalid WooCommerce webhook signature"):
+            svc.ingest_woo_order(body, _fake_headers(headers))
+
+    def test_missing_signature_header_rejected(self, db):
+        """A webhook without the signature header is rejected."""
+        svc = _make_service(db)
+        payload = _make_woo_order_payload(order_id=9003)
+        body = json.dumps(payload).encode()
+        headers = _make_woo_headers(body, include_signature=False)
+
+        with pytest.raises(WebhookAuthError, match="missing X-WC-Webhook-Signature"):
+            svc.ingest_woo_order(body, _fake_headers(headers))
+
+    def test_secret_with_whitespace_accepted(self, db):
+        """Secret with trailing whitespace (common env-file issue) still works."""
+        # WooCommerce signs with the clean secret; GoalOS env has trailing whitespace.
+        clean_secret = "wc_webhook_secret_456"
+        dirty_secret = clean_secret + "  \n\t"
+        svc = WooCommerceWebhookService(db, woo_secret=dirty_secret, cart_secret=CART_SECRET)
+        payload = _make_woo_order_payload(order_id=9004)
+        body = json.dumps(payload).encode()
+        # Sign with the CLEAN secret (simulating WooCommerce)
+        sig_bytes = hmac_mod.new(clean_secret.encode(), body, hashlib.sha256).digest()
+        sig = base64.b64encode(sig_bytes).decode()
+        headers = _make_woo_headers(body, include_signature=False)
+        headers["X-WC-Webhook-Signature"] = sig
+
+        result = svc.ingest_woo_order(body, _fake_headers(headers))
+        assert result.accepted is True
+        assert result.record_id == "9004"
+
+    def test_secret_via_env_with_whitespace(self, db, monkeypatch):
+        """Secret loaded from env var with trailing whitespace is stripped."""
+        clean_secret = "env_secret_789"
+        monkeypatch.setenv("GOALOS_WOOCOMMERCE_WEBHOOK_SECRET", clean_secret + "  \n")
+        monkeypatch.setenv("GOALOS_ABANDONED_CART_WEBHOOK_SECRET", CART_SECRET)
+        svc = WooCommerceWebhookService(db)
+        payload = _make_woo_order_payload(order_id=9005)
+        body = json.dumps(payload).encode()
+        # Sign with the clean secret (simulating WooCommerce)
+        sig_bytes = hmac_mod.new(clean_secret.encode(), body, hashlib.sha256).digest()
+        sig = base64.b64encode(sig_bytes).decode()
+        headers = _make_woo_headers(body, include_signature=False)
+        headers["X-WC-Webhook-Signature"] = sig
+
+        result = svc.ingest_woo_order(body, _fake_headers(headers))
+        assert result.accepted is True
+
+    def test_hmac_secret_not_exposed_in_error(self, db):
+        """Error messages must never contain the actual secret value."""
+        svc = _make_service(db)
+        payload = _make_woo_order_payload(order_id=9006)
+        body = json.dumps(payload).encode()
+        headers = _make_woo_headers(body, include_signature=False)
+        headers["X-WC-Webhook-Signature"] = _sign_woo(body, "wrong")
+
+        with pytest.raises(WebhookAuthError) as exc_info:
+            svc.ingest_woo_order(body, _fake_headers(headers))
+        error_msg = str(exc_info.value)
+        assert WOO_SECRET not in error_msg
+        assert WOO_SECRET[:4] not in error_msg
+
+    def test_full_order_ingestion_with_line_items(self, db):
+        """Full end-to-end: valid HMAC → order persisted → items stored."""
+        svc = _make_service(db)
+        payload = _make_woo_order_payload(
+            order_id=9007, status="processing", total="3500.00",
+        )
+        body = json.dumps(payload).encode()
+        headers = _make_woo_headers(body)
+
+        result = svc.ingest_woo_order(body, _fake_headers(headers))
+        assert result.accepted is True
+
+        order = svc.order_repo.get_by_woo_id(9007)
+        assert order is not None
+        assert order.status == "processing"
+        assert order.total == 3500.00
+        assert order.customer_email == "test@example.com"
+        assert order.billing_phone == "+919876543210"
+        assert len(order.line_items) == 1
+        assert order.line_items[0].product_id == 101
+        assert order.line_items[0].quantity == 2
+
+    def test_order_update_preserves_idempotency(self, db):
+        """Same delivery ID arriving twice returns duplicate, not a new record."""
+        svc = _make_service(db)
+        payload = _make_woo_order_payload(order_id=9008)
+        body = json.dumps(payload).encode()
+        headers = _make_woo_headers(body, delivery_id="9999")
+
+        result1 = svc.ingest_woo_order(body, _fake_headers(headers))
+        assert result1.accepted is True
+
+        result2 = svc.ingest_woo_order(body, _fake_headers(headers))
+        assert result2.accepted is False
+        assert result2.status == "duplicate"
+
+        order = svc.order_repo.get_by_woo_id(9008)
+        assert order is not None
+        # Only one event persisted
+        events = svc.event_repo.list(limit=10)
+        woo_events = [e for e in events if e.source == "woocommerce"]
+        assert len(woo_events) == 1
