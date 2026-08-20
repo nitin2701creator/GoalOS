@@ -58,6 +58,9 @@ services:
       LLM_BASE_URL: "${LLM_BASE_URL:-http://host.docker.internal:3001/v1}"
       LLM_API_KEY: "${LLM_API_KEY:-}"
       LLM_MODEL: "${LLM_MODEL:-free-llm-small}"
+      # Google Gemini provider (optional; set LLM_PROVIDER=gemini to use).
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GEMINI_MODEL: "${GEMINI_MODEL:-}"
       # Web research provider (duckduckgo | empty to disable).
       GOALOS_SEARCH_PROVIDER: "${GOALOS_SEARCH_PROVIDER:-duckduckgo}"
       # Integration credentials (optional; integrations report Not

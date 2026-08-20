@@ -13,3 +13,15 @@ __all__ = [
     "OpenAICompatibleProvider",
     "ProviderFactory",
 ]
+
+
+def _optional_gemini_provider():
+    """Lazily expose GeminiProvider when google-genai is installed."""
+    try:
+        from app.llm.gemini_provider import GeminiProvider  # noqa: WPS433
+        return GeminiProvider
+    except ImportError:
+        return None
+
+
+GeminiProvider = _optional_gemini_provider()

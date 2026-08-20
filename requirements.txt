@@ -7,3 +7,4 @@ sqlalchemy==2.0.51
 pydantic==2.13.4
 pypdf==6.15.0
 requests==2.34.2
+google-genai>=1.0.0

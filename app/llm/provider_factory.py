@@ -19,4 +19,8 @@ class ProviderFactory:
             return FreeLLMProvider()
         if provider_name in {"openai", "openai_compatible"}:
             return OpenAICompatibleProvider()
+        if provider_name == "gemini":
+            from app.llm.gemini_provider import GeminiProvider
+
+            return GeminiProvider()
         raise ValueError(f"Unsupported LLM provider: {provider_name}")
