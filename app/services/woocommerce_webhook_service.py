@@ -299,19 +299,33 @@ class WooCommerceWebhookService:
             expected = base64.b64encode(expected_bytes).decode()
             match = hmac_mod.compare_digest(expected, signature)
             if not match:
+                body_sha = hashlib.sha256(raw_body).hexdigest()[:16]
                 logger.warning(
                     "WooCommerce webhook signature mismatch — "
                     "received sig starts=%s ends=%s (len=%d), "
                     "computed sig starts=%s ends=%s (len=%d), "
-                    "secret len=%d, body len=%d",
+                    "secret len=%d, body len=%d, body_sha256=%s",
                     signature[:4], signature[-4:], len(signature),
                     expected[:4], expected[-4:], len(expected),
-                    len(self._woo_secret), len(raw_body),
+                    len(self._woo_secret), len(raw_body), body_sha,
                 )
             return match
         except Exception:
             logger.exception("WooCommerce HMAC verification raised an exception")
             return False
+
+    def get_secret_info(self) -> dict[str, Any]:
+        """Return non-sensitive diagnostic info about the loaded secret.
+
+        Never exposes the actual secret value — only its length and
+        whether it was loaded.  Used by the diagnostic endpoint.
+        """
+        return {
+            "secret_configured": bool(self._woo_secret),
+            "secret_length": len(self._woo_secret),
+            "cart_secret_configured": bool(self._cart_secret),
+            "cart_secret_length": len(self._cart_secret),
+        }
 
     # ================================================================== #
     # Order upsert                                                        #

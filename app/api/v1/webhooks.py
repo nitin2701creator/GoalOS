@@ -230,6 +230,32 @@ def list_webhook_events(
 # --------------------------------------------------------------------- #
 
 @router.get(
+    "/webhooks/woocommerce/debug",
+    summary="WooCommerce webhook diagnostic (no secrets exposed)",
+)
+def woo_webhook_debug(
+    service: WooCommerceWebhookService = Depends(_get_woo_service),
+):
+    """Return diagnostic info about the loaded webhook configuration.
+
+    Shows whether secrets are loaded and their lengths — never the
+    actual values.  Use this to verify the VPS env is correct.
+    """
+    import os
+
+    info = service.get_secret_info()
+    # Show which env var was actually loaded (name only, not value)
+    info["env_source"] = (
+        "GOALOS_WOOCOMMERCE_WEBHOOK_SECRET"
+        if os.getenv("GOALOS_WOOCOMMERCE_WEBHOOK_SECRET", "").strip()
+        else "WOOCOMMERCE_WEBHOOK_SECRET"
+        if os.getenv("WOOCOMMERCE_WEBHOOK_SECRET", "").strip()
+        else "NONE"
+    )
+    return info
+
+
+@router.get(
     "/webhooks/woocommerce/orders",
     summary="List ingested WooCommerce orders",
 )
