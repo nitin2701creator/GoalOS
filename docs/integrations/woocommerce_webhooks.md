@@ -20,7 +20,7 @@ WooCommerce
 │       ↓
 │   Recovery Linkage (abandoned cart → order matching)
 │
-└── Abandoned Cart Lite → WordPress Bridge
+└── Abandoned Cart Lite → WordPress Bridge Plugin
         ↓  Bearer token auth
         ↓
     POST /api/v1/webhooks/abandoned-cart
@@ -65,37 +65,50 @@ Legacy name accepted: `WOOCOMMERCE_WEBHOOK_SECRET`
 WooCommerce will send `X-WC-Webhook-Signature` (base64 of HMAC-SHA256 of the
 raw body using the secret) and `X-WC-Webhook-Delivery-ID` in the headers.
 
-## Abandoned Cart Bridge Setup
+## Abandoned Cart Bridge Plugin Setup
 
-The WordPress bridge (a custom endpoint or plugin hook) sends abandoned-cart
-events to GoalOS via a simple HTTPS POST:
+The WordPress bridge is a standalone plugin that works with **Abandoned Cart Lite 6.8.3 (Free/Lite)**.
 
+### Installation
+
+1. Copy `wordpress-goalos-bridge.php` to your WordPress installation:
+   ```
+   wp-content/plugins/goalos-abandoned-cart-bridge/goalos-abandoned-cart-bridge.php
+   ```
+2. In WordPress admin → **Plugins**, activate **GoalOS Abandoned Cart Bridge**
+3. Go to **Settings → GoalOS Bridge**
+4. Enter:
+   - **GoalOS Webhook URL**: `https://<your-goalos-url>/api/v1/webhooks/abandoned-cart`
+   - **Webhook Secret**: The value of `GOALOS_ABANDONED_CART_WEBHOOK_SECRET` on the GoalOS server
+5. Click **Save Settings**
+
+### How It Works
+
+The plugin uses two mechanisms to detect abandoned carts:
+
+1. **Primary**: Hooks into `woocommerce_ac_status_change_cart` (fired by Abandoned Cart Lite when a cart status changes)
+2. **Fallback**: WP-Cron job runs every 60 seconds, querying the plugin's database table for newly abandoned carts
+
+When an abandoned cart is detected, the plugin sends an HTTPS POST to GoalOS with the cart data.
+
+### Recovery Detection
+
+The plugin also runs a recovery check every 2 minutes:
+- Queries Abandoned Cart Lite's database for carts with status `recovered`
+- Sends a `cart.recovered` event to GoalOS
+- GoalOS links the recovery to the original abandoned cart
+
+### Testing
+
+Click **Send Test Event** on the Settings → GoalOS Bridge page, or:
+
+```bash
+# From the WordPress server:
+curl -X POST https://<goalos-url>/api/v1/webhooks/abandoned-cart \
+  -H "Authorization: Bearer <GOALOS_ABANDONED_CART_WEBHOOK_SECRET>" \
+  -H "Content-Type: application/json" \
+  -d '{"cart_id":"test_001","customer_email":"test@example.com","cart_total":100,"cart_items":[]}'
 ```
-POST /api/v1/webhooks/abandoned-cart
-Authorization: Bearer <GOALOS_ABANDONED_CART_WEBHOOK_SECRET>
-Content-Type: application/json
-
-{
-  "cart_id": "acl_12345",
-  "customer_email": "user@example.com",
-  "customer_name": "Jane Doe",
-  "currency": "INR",
-  "cart_total": 2500.00,
-  "abandoned_at": "2026-08-19T10:25:00Z",
-  "cart_items": [
-    {
-      "product_id": 101,
-      "sku": "PROD-001",
-      "product_name": "Widget Pro",
-      "quantity": 2,
-      "unit_price": 1250.00,
-      "line_total": 2500.00
-    }
-  ]
-}
-```
-
-Anonymous visitors may omit `customer_email` and `customer_name`.
 
 ## API Endpoints
 
@@ -234,3 +247,17 @@ curl -X POST https://<goalos-url>/api/v1/webhooks/abandoned-cart \
 # Use WooCommerce's built-in webhook test feature:
 # WooCommerce → Settings → Advanced → Webhooks → click webhook → "Send test"
 ```
+
+## VPS Configuration
+
+After deploying GoalOS, set the abandoned cart webhook secret:
+
+```bash
+# On the VPS at /opt/GoalOS:
+echo "GOALOS_ABANDONED_CART_WEBHOOK_SECRET=<choose-a-strong-secret>" >> /etc/goalos/goalos.env
+sudo systemctl restart goalos.service
+```
+
+Then use the **same secret** in:
+1. GoalOS env (above)
+2. WordPress bridge plugin settings (Settings → GoalOS Bridge)
