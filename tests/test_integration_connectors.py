@@ -23,6 +23,7 @@ from app.db.models.project import Project
 from app.db.models.workflow import Workflow
 from app.integrations.connector_health import ConnectorHealthStatus
 from app.integrations.exceptions import (
+    AuthenticationError,
     CapabilityUnavailableError,
     PermissionDeniedError,
 )
@@ -221,10 +222,7 @@ def test_woocommerce_reads_products_and_enforces_write_permission(monkeypatch: p
         {"product_id": 1, "stock_quantity": 9},
         permissions={Permission.READ_WEBSITE, Permission.WRITE_WEBSITE},
     )
-    assert updated["stock_quantity"] == 9
-
-
-# ---------------------------------------------------------------------------
+    assert updated["stock_quantity"] == 9# ---------------------------------------------------------------------------
 # Google Analytics 4
 # ---------------------------------------------------------------------------
 class FakeTokenProvider:
@@ -232,12 +230,57 @@ class FakeTokenProvider:
         return "fake-access-token"
 
 
+class FakeOAuthProvider:
+    """Simulates GoogleOAuthTokenProvider for tests."""
+
+    def __init__(self) -> None:
+        self.is_configured = True
+
+    def get_token(self) -> str:
+        return "fake-oauth-token"
+
+
+class FakeOAuthNotConfigured:
+    """Simulates an unconfigured OAuth provider."""
+
+    is_configured = False
+
+    def get_token(self) -> str:
+        raise AuthenticationError("not configured")
+
+
 def test_ga4_reports_not_configured_and_auth_required() -> None:
-    assert GoogleAnalyticsConnector().health_check().status is ConnectorHealthStatus.NOT_CONFIGURED
+    # No credentials at all -> AUTHENTICATION_REQUIRED
+    assert GoogleAnalyticsConnector().health_check().status is ConnectorHealthStatus.AUTHENTICATION_REQUIRED
+    # Property ID present but no auth -> AUTHENTICATION_REQUIRED
     with_credentials = GoogleAnalyticsConnector(
         property_id="123456", token_provider=None
     )
     assert with_credentials.health_check().status is ConnectorHealthStatus.AUTHENTICATION_REQUIRED
+
+
+def test_ga4_health_with_oauth() -> None:
+    connector = GoogleAnalyticsConnector(
+        property_id="123456",
+        oauth_token_provider=FakeOAuthProvider(),
+    )
+    health = connector.health_check()
+    assert health.status is ConnectorHealthStatus.HEALTHY
+    result = connector._health()
+    assert result["auth_method"] == "oauth"
+    assert result["configured"] is True
+    assert result["property_id"] == "123456"
+
+
+def test_ga4_health_with_service_account() -> None:
+    connector = GoogleAnalyticsConnector(
+        property_id="123456",
+        token_provider=FakeTokenProvider(),
+    )
+    health = connector.health_check()
+    assert health.status is ConnectorHealthStatus.HEALTHY
+    result = connector._health()
+    assert result["auth_method"] == "service_account"
 
 
 def test_ga4_run_report_normalizes_rows(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -266,6 +309,361 @@ def test_ga4_run_report_normalizes_rows(monkeypatch: pytest.MonkeyPatch) -> None
     assert report["rows"][0]["sessions"] == "42"
     assert report["dimensions"] == ["date"]
     assert report["realtime"] is False
+    assert report["property_id"] == "123456"
+    assert "summary" in report
+    assert "property_quota" in report
+
+
+def test_ga4_run_report_with_rich_dimensions_and_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify that rich dimension/metric combinations are passed through."""
+    captured: dict[str, Any] = {}
+
+    def ga4_opener(request: Any, timeout: float | None = None) -> FakeResponse:
+        if hasattr(request, "read"):
+            body_bytes = request.read() if callable(getattr(request, "read", None)) else b""
+            if body_bytes:
+                captured["body"] = json.loads(body_bytes)
+        payload = {
+            "dimensionHeaders": [
+                {"name": "sessionSource"},
+                {"name": "sessionMedium"},
+                {"name": "sessionCampaignName"},
+                {"name": "landingPage"},
+            ],
+            "metricHeaders": [
+                {"name": "totalUsers"},
+                {"name": "sessions"},
+                {"name": "screenPageViews"},
+                {"name": "conversions"},
+            ],
+            "rows": [
+                {
+                    "dimensionValues": [
+                        {"value": "google"},
+                        {"value": "organic"},
+                        {"value": "summer_sale"},
+                        {"value": "/products"},
+                    ],
+                    "metricValues": [
+                        {"value": "1200"},
+                        {"value": "1500"},
+                        {"value": "3000"},
+                        {"value": "45"},
+                    ],
+                }
+            ],
+            "totals": [
+                {
+                    "dimensionValues": [{"value": ""}],
+                    "metricValues": [
+                        {"value": "1200"},
+                        {"value": "1500"},
+                        {"value": "3000"},
+                        {"value": "45"},
+                    ],
+                }
+            ],
+        }
+        return FakeResponse(json.dumps(payload).encode(), str(request.full_url), content_type="application/json")
+
+    monkeypatch.setattr("app.integrations.http_client.urlopen", ga4_opener)
+    connector = GoogleAnalyticsConnector(
+        client=HttpClient(),
+        property_id="987654",
+        token_provider=FakeTokenProvider(),
+    )
+
+    report = connector.execute(
+        "analytics.report",
+        {
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-31",
+            "dimensions": ["sessionSource", "sessionMedium", "sessionCampaignName", "landingPage"],
+            "metrics": ["totalUsers", "sessions", "screenPageViews", "conversions"],
+        },
+        permissions={Permission.READ_ANALYTICS},
+    )
+
+    assert report["row_count"] == 1
+    assert report["rows"][0]["sessionSource"] == "google"
+    assert report["rows"][0]["sessionMedium"] == "organic"
+    assert report["rows"][0]["sessionCampaignName"] == "summer_sale"
+    assert report["rows"][0]["landingPage"] == "/products"
+    assert report["rows"][0]["conversions"] == "45"
+    assert report["summary"]["sessions"] == "1500"
+    assert report["dimensions"] == ["sessionSource", "sessionMedium", "sessionCampaignName", "landingPage"]
+    assert report["metrics"] == ["totalUsers", "sessions", "screenPageViews", "conversions"]
+    assert report["property_id"] == "987654"
+
+
+def test_ga4_run_report_with_revenue_metric(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify purchaseRevenue metric can be queried."""
+    def ga4_opener(request: Any, timeout: float | None = None) -> FakeResponse:
+        payload = {
+            "dimensionHeaders": [{"name": "date"}],
+            "metricHeaders": [{"name": "purchaseRevenue"}, {"name": "transactions"}],
+            "rows": [
+                {
+                    "dimensionValues": [{"value": "20260801"}],
+                    "metricValues": [{"value": "1542.50"}, {"value": "23"}],
+                }
+            ],
+        }
+        return FakeResponse(json.dumps(payload).encode(), str(request.full_url), content_type="application/json")
+
+    monkeypatch.setattr("app.integrations.http_client.urlopen", ga4_opener)
+    connector = GoogleAnalyticsConnector(
+        client=HttpClient(),
+        property_id="111222",
+        token_provider=FakeTokenProvider(),
+    )
+
+    report = connector.execute(
+        "analytics.report",
+        {
+            "start_date": "7daysAgo",
+            "end_date": "today",
+            "metrics": ["purchaseRevenue", "transactions"],
+        },
+        permissions={Permission.READ_ANALYTICS},
+    )
+
+    assert report["rows"][0]["purchaseRevenue"] == "1542.50"
+    assert report["rows"][0]["transactions"] == "23"
+
+
+def test_ga4_run_report_requires_property_id() -> None:
+    """Report without property_id raises CapabilityUnavailableError."""
+    connector = GoogleAnalyticsConnector(
+        property_id="",
+        token_provider=FakeTokenProvider(),
+    )
+    with pytest.raises(CapabilityUnavailableError, match="property_id"):
+        connector.execute(
+            "analytics.report",
+            {"start_date": "7daysAgo", "end_date": "today"},
+            permissions={Permission.READ_ANALYTICS},
+        )
+
+
+def test_ga4_list_properties_with_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """List properties via OAuth discovers GA4 accounts."""
+    def admin_opener(request: Any, timeout: float | None = None) -> FakeResponse:
+        payload = {
+            "accountSummaries": [
+                {
+                    "account": "accounts/123456",
+                    "displayName": "My Business",
+                    "propertySummaries": [
+                        {
+                            "property": "properties/987654",
+                            "displayName": "My GA4 Property",
+                            "propertyType": "PROPERTY_TYPE_ORDINARY",
+                            "firebaseProjectId": "my-project-123",
+                        },
+                    ],
+                }
+            ],
+        }
+        return FakeResponse(json.dumps(payload).encode(), str(request.full_url), content_type="application/json")
+
+    monkeypatch.setattr("app.integrations.http_client.urlopen", admin_opener)
+    connector = GoogleAnalyticsConnector(
+        client=HttpClient(),
+        oauth_token_provider=FakeOAuthProvider(),
+    )
+
+    result = connector.execute(
+        "analytics.list_properties",
+        {},
+        permissions={Permission.READ_ANALYTICS},
+    )
+
+    assert result["total"] == 1
+    assert result["properties"][0]["property_id"] == "properties/987654"
+    assert result["properties"][0]["display_name"] == "My GA4 Property"
+    assert result["properties"][0]["property_type"] == "PROPERTY_TYPE_ORDINARY"
+    assert result["properties"][0]["account_id"] == "accounts/123456"
+    assert result["properties"][0]["account_name"] == "My Business"
+    assert result["properties"][0]["firebase_project_id"] == "my-project-123"
+    assert "next_page_token" in result
+
+
+def test_ga4_list_properties_with_pagination(monkeypatch: pytest.MonkeyPatch) -> None:
+    """List properties handles pagination."""
+    call_count = 0
+
+    def admin_opener(request: Any, timeout: float | None = None) -> FakeResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            payload = {
+                "accountSummaries": [
+                    {
+                        "account": "accounts/1",
+                        "displayName": "Acct 1",
+                        "propertySummaries": [
+                            {"property": "properties/100", "displayName": "Prop 1", "propertyType": "PROPERTY_TYPE_ORDINARY"},
+                        ],
+                    }
+                ],
+                "nextPageToken": "token_abc",
+            }
+        else:
+            payload = {
+                "accountSummaries": [
+                    {
+                        "account": "accounts/2",
+                        "displayName": "Acct 2",
+                        "propertySummaries": [
+                            {"property": "properties/200", "displayName": "Prop 2", "propertyType": "PROPERTY_TYPE_ORDINARY"},
+                        ],
+                    }
+                ],
+            }
+        return FakeResponse(json.dumps(payload).encode(), str(request.full_url), content_type="application/json")
+
+    monkeypatch.setattr("app.integrations.http_client.urlopen", admin_opener)
+    connector = GoogleAnalyticsConnector(
+        client=HttpClient(),
+        oauth_token_provider=FakeOAuthProvider(),
+    )
+
+    page1 = connector.execute("analytics.list_properties", {}, permissions={Permission.READ_ANALYTICS})
+    assert page1["total"] == 1
+    assert page1["next_page_token"] == "token_abc"
+
+    page2 = connector.execute(
+        "analytics.list_properties",
+        {"page_token": "token_abc"},
+        permissions={Permission.READ_ANALYTICS},
+    )
+    assert page2["total"] == 1
+    assert page2["next_page_token"] is None
+
+
+def test_ga4_list_properties_empty() -> None:
+    """List properties with no OAuth or SA reports not configured."""
+    connector = GoogleAnalyticsConnector(property_id="", oauth_token_provider=FakeOAuthNotConfigured())
+    assert connector.health_check().status is ConnectorHealthStatus.AUTHENTICATION_REQUIRED
+
+
+def test_ga4_run_report_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GA4 API returning 401 raises AuthenticationError."""
+    def error_opener(request: Any, timeout: float | None = None) -> FakeResponse:
+        return FakeResponse(
+            json.dumps({"error": {"code": 401, "message": "Unauthorized"}}).encode(),
+            str(request.full_url),
+            status=401,
+            content_type="application/json",
+        )
+
+    monkeypatch.setattr("app.integrations.http_client.urlopen", error_opener)
+    connector = GoogleAnalyticsConnector(
+        client=HttpClient(),
+        property_id="123456",
+        token_provider=FakeTokenProvider(),
+    )
+
+    from app.integrations.exceptions import AuthenticationError as AuthErr
+    with pytest.raises(AuthErr, match="AUTHENTICATION_FAILED"):
+        connector.execute(
+            "analytics.report",
+            {"start_date": "7daysAgo", "end_date": "today"},
+            permissions={Permission.READ_ANALYTICS},
+        )
+
+
+def test_ga4_run_report_permission_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GA4 API returning 403 raises PermissionDeniedError."""
+    def error_opener(request: Any, timeout: float | None = None) -> FakeResponse:
+        return FakeResponse(
+            json.dumps({"error": {"code": 403, "message": "Forbidden"}}).encode(),
+            str(request.full_url),
+            status=403,
+            content_type="application/json",
+        )
+
+    monkeypatch.setattr("app.integrations.http_client.urlopen", error_opener)
+    connector = GoogleAnalyticsConnector(
+        client=HttpClient(),
+        property_id="123456",
+        token_provider=FakeTokenProvider(),
+    )
+
+    with pytest.raises(PermissionDeniedError, match="PERMISSION_DENIED"):
+        connector.execute(
+            "analytics.report",
+            {"start_date": "7daysAgo", "end_date": "today"},
+            permissions={Permission.READ_ANALYTICS},
+        )
+
+
+def test_ga4_run_report_rate_limit_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GA4 API returning 429 raises RateLimitError."""
+    from app.integrations.exceptions import RateLimitError
+
+    def error_opener(request: Any, timeout: float | None = None) -> FakeResponse:
+        return FakeResponse(
+            b"{}",
+            str(request.full_url),
+            status=429,
+            content_type="application/json",
+        )
+
+    monkeypatch.setattr("app.integrations.http_client.urlopen", error_opener)
+    connector = GoogleAnalyticsConnector(
+        client=HttpClient(),
+        property_id="123456",
+        token_provider=FakeTokenProvider(),
+    )
+
+    with pytest.raises(RateLimitError, match="RATE_LIMITED"):
+        connector.execute(
+            "analytics.report",
+            {"start_date": "7daysAgo", "end_date": "today"},
+            permissions={Permission.READ_ANALYTICS},
+        )
+
+
+def test_ga4_unsupported_capability() -> None:
+    """Unsupported capabilities raise CapabilityUnavailableError."""
+    connector = GoogleAnalyticsConnector(
+        property_id="123456",
+        token_provider=FakeTokenProvider(),
+    )
+    with pytest.raises(CapabilityUnavailableError, match="not supported"):
+        connector.execute(
+            "analytics.nonexistent",
+            {},
+            permissions={Permission.READ_ANALYTICS},
+        )
+
+
+def test_ga4_oauth_token_not_exposed_in_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OAuth token value must never appear in error messages."""
+    def error_opener(request: Any, timeout: float | None = None) -> FakeResponse:
+        return FakeResponse(
+            b"{\"error\": {\"code\": 401, \"message\": \"token expired\"}}",
+            str(request.full_url),
+            status=401,
+        )
+
+    monkeypatch.setattr("app.integrations.http_client.urlopen", error_opener)
+    connector = GoogleAnalyticsConnector(
+        client=HttpClient(),
+        property_id="123456",
+        oauth_token_provider=FakeOAuthProvider(),
+    )
+
+    from app.integrations.exceptions import AuthenticationError as AuthErr
+    with pytest.raises(AuthErr) as exc_info:
+        connector.execute(
+            "analytics.report",
+            {"start_date": "7daysAgo", "end_date": "today"},
+            permissions={Permission.READ_ANALYTICS},
+        )
+    assert "fake-oauth-token" not in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
