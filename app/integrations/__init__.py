@@ -29,6 +29,7 @@ from app.integrations.http_client import (
 from app.integrations.integration_connector import IntegrationConnector
 from app.integrations.linkedin import LinkedInConnector
 from app.integrations.meta_ads import MetaAdsConnector
+from app.integrations.meta_social import MetaSocialConnector
 from app.integrations.scheduler import SchedulerConnector
 from app.integrations.social import SocialConnector
 from app.integrations.twenty import TwentyConnector
@@ -61,6 +62,7 @@ __all__ = [
     "IntegrationConnector",
     "LinkedInConnector",
     "MetaAdsConnector",
+    "MetaSocialConnector",
     "PermissionDeniedError",
     "RateLimitError",
     "SchedulerConnector",

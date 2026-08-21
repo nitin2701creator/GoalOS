@@ -19,6 +19,7 @@ from app.integrations.google_drive import GoogleDriveConnector
 from app.integrations.http_client import HttpClient
 from app.integrations.linkedin import LinkedInConnector
 from app.integrations.meta_ads import MetaAdsConnector
+from app.integrations.meta_social import MetaSocialConnector
 from app.integrations.n8n import N8NConnector
 from app.integrations.scheduler import SchedulerConnector
 from app.integrations.social import SocialConnector
@@ -123,7 +124,12 @@ def build_default_registry(
     registry.register(SchedulerConnector(db=session))
     registry.register(TwentyConnector(client=client or HttpClient()))
     registry.register(LinkedInConnector(client=client or HttpClient()))
-    registry.register(SocialConnector())
+    meta_social = MetaSocialConnector(client=client or HttpClient())
+    registry.register(meta_social)
+    social = SocialConnector()
+    social.register_provider("meta", meta_social)
+    social.register_provider("linkedin", LinkedInConnector(client=client or HttpClient()))
+    registry.register(social)
     registry.register(N8NConnector(client=client or HttpClient()))
     return registry
 

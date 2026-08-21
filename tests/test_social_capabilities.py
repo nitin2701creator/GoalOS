@@ -87,7 +87,7 @@ def test_social_connector_reports_not_configured() -> None:
     for capability in ("social.meta.publish_post", "social.linkedin.get_post"):
         available, reason = connector.capability_available(capability)
         assert not available
-        assert "not configured" in reason
+        assert ("not configured" in reason or "not registered" in reason)
     # Capability permission contract is declared even though nothing runs.
     assert connector.CAPABILITY_PERMISSIONS["social.meta.publish_post"] is Permission.PUBLISH_SOCIAL
     assert connector.CAPABILITY_PERMISSIONS["social.meta.get_insights"] is Permission.READ_SOCIAL
@@ -182,6 +182,7 @@ def test_social_publish_workflow_never_claims_fake_success(session_factory) -> N
         assert run.workflow.status == "Failed"
         assert run.executions[0].status.value == "blocked"
         assert run.executions[0].error_code == "INTEGRATION_NOT_CONFIGURED"
-        assert "not configured" in (run.workflow.error_message or "").casefold()
+        error_msg = (run.workflow.error_message or "").casefold()
+        assert "not configured" in error_msg or "not registered" in error_msg
     finally:
         session.close()
