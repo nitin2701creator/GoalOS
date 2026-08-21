@@ -38,20 +38,20 @@ _PROVIDER_NAMES: dict[str, str] = {
 #: Provider slug → (read capabilities, write capabilities)
 _PROVIDER_CAPABILITIES: dict[str, tuple[list[str], list[str]]] = {
     "meta": (
-        ["get_post", "get_insights", "list_pages", "list_instagram_accounts", "get_page_info", "get_page_insights"],
-        ["create_post", "publish_post"],
+        ["get_post", "get_insights", "list_pages", "list_instagram_accounts", "get_page_info", "get_page_insights", "get_instagram_media", "get_instagram_insights"],
+        ["create_post", "publish_post", "publish_to_instagram", "delete_post"],
     ),
     "linkedin": (
-        ["get_post", "get_analytics"],
+        ["get_post", "get_analytics", "list_organizations"],
         ["create_post", "publish_post"],
     ),
     "x": (
-        ["get_post", "get_analytics"],
-        ["create_post", "publish_post"],
+        ["get_post", "get_analytics", "get_account"],
+        ["create_post", "publish_post", "delete_post"],
     ),
     "reddit": (
-        ["get_post", "get_analytics"],
-        ["create_post", "publish_post"],
+        ["get_post", "get_account", "list_subreddits"],
+        ["create_post", "publish_post", "create_comment"],
     ),
 }
 
@@ -250,9 +250,26 @@ class SocialConnector(IntegrationConnector):
             },
             "linkedin": {
                 "get_post": "linkedin.get_post",
-                "get_analytics": "linkedin.health",
+                "get_analytics": "linkedin.get_analytics",
+                "list_organizations": "linkedin.get_org_organizations",
                 "create_post": "linkedin.create_text_post",
                 "publish_post": "linkedin.create_text_post",
+            },
+            "x": {
+                "get_post": "twitter.get_tweet",
+                "get_analytics": "twitter.get_tweet_metrics",
+                "get_account": "twitter.get_me",
+                "create_post": "twitter.create_tweet",
+                "publish_post": "twitter.create_tweet",
+                "delete_post": "twitter.delete_tweet",
+            },
+            "reddit": {
+                "get_post": "reddit.get_post",
+                "get_account": "reddit.get_me",
+                "list_subreddits": "reddit.list_subreddits",
+                "create_post": "reddit.submit_post",
+                "publish_post": "reddit.submit_post",
+                "create_comment": "reddit.submit_comment",
             },
         }
         return mapping.get(provider, {}).get(action)

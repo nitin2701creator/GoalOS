@@ -30,10 +30,12 @@ from app.integrations.integration_connector import IntegrationConnector
 from app.integrations.linkedin import LinkedInConnector
 from app.integrations.meta_ads import MetaAdsConnector
 from app.integrations.meta_social import MetaSocialConnector
+from app.integrations.reddit import RedditConnector
 from app.integrations.scheduler import SchedulerConnector
 from app.integrations.social import SocialConnector
 from app.integrations.twenty import TwentyConnector
 from app.integrations.web import WebConnector
+from app.integrations.x_twitter import TwitterConnector
 from app.integrations.website import WebsiteConnector
 from app.integrations.woocommerce import WooCommerceConnector
 
@@ -65,9 +67,11 @@ __all__ = [
     "MetaSocialConnector",
     "PermissionDeniedError",
     "RateLimitError",
+    "RedditConnector",
     "SchedulerConnector",
     "SocialConnector",
     "TwentyConnector",
+    "TwitterConnector",
     "WebConnector",
     "WebsiteConnector",
     "WooCommerceConnector",

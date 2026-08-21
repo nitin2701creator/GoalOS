@@ -53,12 +53,15 @@ _READ_CAPABILITIES = frozenset({
     "meta_social.get_post",
     "meta_social.get_page_insights",
     "meta_social.get_post_insights",
+    "meta_social.get_instagram_media",
+    "meta_social.get_instagram_insights",
 })
 
 # Capabilities that publish/modify data
 _WRITE_CAPABILITIES = frozenset({
     "meta_social.publish_post",
     "meta_social.delete_post",
+    "meta_social.publish_to_instagram",
 })
 
 
@@ -82,6 +85,9 @@ class MetaSocialConnector(IntegrationConnector):
             "meta_social.delete_post",
             "meta_social.get_page_insights",
             "meta_social.get_post_insights",
+            "meta_social.publish_to_instagram",
+            "meta_social.get_instagram_media",
+            "meta_social.get_instagram_insights",
         )
     }
 
@@ -111,6 +117,9 @@ class MetaSocialConnector(IntegrationConnector):
             "meta_social.delete_post",
             "meta_social.get_page_insights",
             "meta_social.get_post_insights",
+            "meta_social.publish_to_instagram",
+            "meta_social.get_instagram_media",
+            "meta_social.get_instagram_insights",
         )
 
     def _configuration_status(self) -> tuple[Any, str | None]:
@@ -142,6 +151,12 @@ class MetaSocialConnector(IntegrationConnector):
             return self._get_page_insights(params)
         if capability == "meta_social.get_post_insights":
             return self._get_post_insights(params)
+        if capability == "meta_social.publish_to_instagram":
+            return self._publish_to_instagram(params)
+        if capability == "meta_social.get_instagram_media":
+            return self._get_instagram_media(params)
+        if capability == "meta_social.get_instagram_insights":
+            return self._get_instagram_insights(params)
         raise CapabilityUnavailableError(f"unsupported capability: {capability}")
 
     # ------------------------------------------------------------------
@@ -369,6 +384,154 @@ class MetaSocialConnector(IntegrationConnector):
                 summary[name] = 0
         return {
             "post_id": post_id,
+            "metrics": data,
+            "summary": summary,
+        }
+
+    def _publish_to_instagram(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Publish a photo/video to Instagram via the Graph API.
+
+        Requires the instagram_content_publish permission and a Page token
+        for a Page connected to an Instagram Business/Creator account.
+        """
+        instagram_account_id = params.get("instagram_account_id")
+        if not instagram_account_id:
+            raise ValueError(
+                "instagram_account_id is required for meta_social.publish_to_instagram"
+            )
+        image_url = params.get("image_url") or params.get("media_url")
+        caption = params.get("caption") or params.get("message") or ""
+        if not image_url:
+            raise ValueError("image_url is required for meta_social.publish_to_instagram")
+
+        access_token = params.get("access_token") or self.page_access_token
+        body: dict[str, Any] = {
+            "image_url": image_url,
+            "caption": caption,
+        }
+        response = self._fetch(
+            "POST",
+            f"{_GRAPH_API}/{instagram_account_id}/media",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            body=self._url_encode(body).encode(),
+            extra_token=access_token,
+        )
+        payload = self._decode(response, path=f"ig/{instagram_account_id}/media")
+        container_id = payload.get("id")
+        if not container_id:
+            raise ConnectorError("Meta returned no container ID for Instagram media")
+
+        # Publish the container
+        publish_body: dict[str, Any] = {"creation_id": container_id}
+        publish_response = self._fetch(
+            "POST",
+            f"{_GRAPH_API}/{instagram_account_id}/media_publish",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            body=self._url_encode(publish_body).encode(),
+            extra_token=access_token,
+        )
+        publish_payload = self._decode(
+            publish_response, path=f"ig/{instagram_account_id}/media_publish"
+        )
+        media_id = publish_payload.get("id", "")
+        return {
+            "created": True,
+            "instagram_account_id": instagram_account_id,
+            "media_id": media_id,
+            "container_id": container_id,
+            "platform_url": f"https://www.instagram.com/p/{media_id}/",
+            "data": publish_payload,
+        }
+
+    def _get_instagram_media(self, params: dict[str, Any]) -> dict[str, Any]:
+        """List recent media from an Instagram Business account."""
+        instagram_account_id = params.get("instagram_account_id")
+        if not instagram_account_id:
+            raise ValueError(
+                "instagram_account_id is required for meta_social.get_instagram_media"
+            )
+        limit = params.get("limit", 25)
+        fields = params.get("fields") or (
+            "id,caption,media_type,media_url,permalink,thumbnail_url,"
+            "timestamp,like_count,comments_count"
+        )
+        response = self._fetch(
+            "GET",
+            f"{_GRAPH_API}/{instagram_account_id}/media",
+            params={"fields": fields, "limit": limit},
+        )
+        payload = self._decode(response, path=f"ig/{instagram_account_id}/media")
+        items = payload.get("data") or []
+        return {
+            "instagram_account_id": instagram_account_id,
+            "total": len(items),
+            "media": [
+                {
+                    "media_id": item.get("id"),
+                    "caption": item.get("caption"),
+                    "media_type": item.get("media_type"),
+                    "media_url": item.get("media_url"),
+                    "permalink": item.get("permalink"),
+                    "thumbnail_url": item.get("thumbnail_url"),
+                    "timestamp": item.get("timestamp"),
+                    "like_count": item.get("like_count", 0),
+                    "comments_count": item.get("comments_count", 0),
+                }
+                for item in items
+                if isinstance(item, dict)
+            ],
+            "paging": payload.get("paging"),
+        }
+
+    def _get_instagram_insights(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Get engagement insights for an Instagram Business account."""
+        instagram_account_id = params.get("instagram_account_id")
+        if not instagram_account_id:
+            raise ValueError(
+                "instagram_account_id is required for meta_social.get_instagram_insights"
+            )
+        metrics = params.get("metrics") or (
+            "impressions,reach,follower_count,"
+            "email_contacts,phone_call_clicks,"
+            "text_message_clicks,profile_views"
+        )
+        period = params.get("period") or "day"
+        since = params.get("since")
+        until = params.get("until")
+
+        query: dict[str, Any] = {"metric": metrics, "period": period}
+        if since:
+            query["since"] = since
+        if until:
+            query["until"] = until
+
+        response = self._fetch(
+            "GET",
+            f"{_GRAPH_API}/{instagram_account_id}/insights",
+            params=query,
+        )
+        payload = self._decode(
+            response, path=f"ig/{instagram_account_id}/insights"
+        )
+        data = payload.get("data") or []
+        summary: dict[str, Any] = {}
+        for metric in data:
+            if not isinstance(metric, dict):
+                continue
+            name = metric.get("name", "")
+            values = metric.get("values") or []
+            if values and isinstance(values, list):
+                total = 0
+                for v in values:
+                    if isinstance(v, dict):
+                        total += float(v.get("value", 0))
+                summary[name] = total
+            else:
+                summary[name] = 0
+
+        return {
+            "instagram_account_id": instagram_account_id,
+            "period": period,
             "metrics": data,
             "summary": summary,
         }

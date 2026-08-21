@@ -54,6 +54,8 @@ class LinkedInConnector(IntegrationConnector):
         "linkedin.get_post": Permission.READ_SOCIAL,
         "linkedin.create_text_post": Permission.PUBLISH_SOCIAL,
         "linkedin.delete_post": Permission.PUBLISH_SOCIAL,
+        "linkedin.get_organization_stats": Permission.READ_SOCIAL,
+        "linkedin.get_post_analytics": Permission.READ_SOCIAL,
     }
 
     def __init__(
@@ -82,6 +84,8 @@ class LinkedInConnector(IntegrationConnector):
             "linkedin.create_text_post",
             "linkedin.get_post",
             "linkedin.delete_post",
+            "linkedin.get_organization_stats",
+            "linkedin.get_post_analytics",
         )
 
     def _configuration_status(self) -> tuple[Any, str | None]:
@@ -113,6 +117,10 @@ class LinkedInConnector(IntegrationConnector):
             return self._get_post(params)
         if capability == "linkedin.delete_post":
             return self._delete_post(params)
+        if capability == "linkedin.get_organization_stats":
+            return self._get_organization_stats(params)
+        if capability == "linkedin.get_post_analytics":
+            return self._get_post_analytics(params)
         raise CapabilityUnavailableError(f"unsupported capability: {capability}")
 
     # ------------------------------------------------------------------
@@ -277,6 +285,49 @@ class LinkedInConnector(IntegrationConnector):
             if message:
                 return str(message)[:300]
         return text[:300]
+
+    def _get_organization_stats(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Get organization follower and engagement statistics."""
+        organization_id = params.get("organization_id") or self.organization_id
+        if not organization_id:
+            raise ValueError("organization_id is required for linkedin.get_organization_stats")
+        # LinkedIn Stats API endpoint
+        response = self._fetch(
+            "GET",
+            f"{_LINKEDIN_API}/organizations/{self._quote(organization_id)}?projection=(id,followersCount,name)"
+        )
+        payload = self._decode(response, path="organizations/stats")
+        return {
+            "organization_id": organization_id,
+            "name": payload.get("name"),
+            "followers_count": payload.get("followersCount", 0),
+            "raw": payload,
+        }
+
+    def _get_post_analytics(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Get engagement analytics for a specific post."""
+        post_id = params.get("post_id")
+        if not post_id:
+            raise ValueError("post_id is required for linkedin.get_post_analytics")
+        # LinkedIn Shares/Posts API for engagement metrics
+        urn = post_id if post_id.startswith("urn:li:") else f"urn:li:share:{post_id}"
+        response = self._fetch(
+            "GET",
+            f"{_LINKEDIN_API}/organizationalEntityShareStatistics?q=organizationalEntity&shares=List({self._quote(urn)})"
+        )
+        payload = self._decode(response, path="shareStatistics")
+        elements = payload.get("elements", [])
+        stats = elements[0] if elements else {}
+        return {
+            "post_id": post_id,
+            "urn": urn,
+            "total_share_count": stats.get("totalShareStatistics", {}).get("shareCount", 0),
+            "total_like_count": stats.get("totalShareStatistics", {}).get("likeCount", 0),
+            "total_comment_count": stats.get("totalShareStatistics", {}).get("commentCount", 0),
+            "total_click_count": stats.get("totalShareStatistics", {}).get("clickCount", 0),
+            "total_impression_count": stats.get("totalShareStatistics", {}).get("impressionCount", 0),
+            "raw": stats,
+        }
 
     @staticmethod
     def _post_id(value: Any) -> str:

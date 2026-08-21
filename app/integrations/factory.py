@@ -21,9 +21,11 @@ from app.integrations.linkedin import LinkedInConnector
 from app.integrations.meta_ads import MetaAdsConnector
 from app.integrations.meta_social import MetaSocialConnector
 from app.integrations.n8n import N8NConnector
+from app.integrations.reddit import RedditConnector
 from app.integrations.scheduler import SchedulerConnector
 from app.integrations.social import SocialConnector
 from app.integrations.twenty import TwentyConnector
+from app.integrations.x_twitter import TwitterConnector
 from app.integrations.web import DuckDuckGoSearchProvider, WebConnector
 from app.integrations.website import WebsiteConnector
 from app.integrations.woocommerce import WooCommerceConnector
@@ -126,9 +128,15 @@ def build_default_registry(
     registry.register(LinkedInConnector(client=client or HttpClient()))
     meta_social = MetaSocialConnector(client=client or HttpClient())
     registry.register(meta_social)
+    twitter_connector = TwitterConnector(client=client or HttpClient())
+    registry.register(twitter_connector)
+    reddit_connector = RedditConnector(client=client or HttpClient())
+    registry.register(reddit_connector)
     social = SocialConnector()
     social.register_provider("meta", meta_social)
     social.register_provider("linkedin", LinkedInConnector(client=client or HttpClient()))
+    social.register_provider("x", twitter_connector)
+    social.register_provider("reddit", reddit_connector)
     registry.register(social)
     registry.register(N8NConnector(client=client or HttpClient()))
     return registry
