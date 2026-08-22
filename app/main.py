@@ -1,8 +1,11 @@
 import logging
 import os
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.api.purchase_order import router as po_router
@@ -18,6 +21,7 @@ from app.dashboard.dashboard_router import router as dashboard_router
 from app.db.base import Base
 from app.db.schema import ensure_schema
 from app.db.session import SessionLocal, engine, get_db
+from app.services.credential_service import CredentialService
 from app.services.google_oauth_service import GoogleOAuthService
 from app.services.integration_service import IntegrationService
 
@@ -85,6 +89,20 @@ app.include_router(dashboard_router)
 # /v1/chat/completions, /v1/health — separate from the /api namespace).
 app.include_router(openai_router, prefix="/v1")
 
+# --- Static file serving for the credentials dashboard ---
+_STATIC_DIR = Path(__file__).parent / "static"
+if _STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+
+@app.get("/integrations", response_class=FileResponse)
+async def integrations_dashboard():
+    """Serve the integrations credentials dashboard."""
+    index = _STATIC_DIR / "credentials" / "index.html"
+    if not index.exists():
+        raise HTTPException(status_code=404, detail="Dashboard not found")
+    return FileResponse(str(index), media_type="text/html")
+
 
 @app.on_event("startup")
 async def on_startup():
@@ -110,6 +128,12 @@ async def on_startup():
         GoogleOAuthService(SessionLocal()).load_into_environment()
     except Exception as exc:  # noqa: BLE001 - hydration must not block startup
         logger.warning("google oauth credential hydration failed at startup: %s", exc)
+    # Hydrate all encrypted credentials into the process environment
+    # so connectors pick them up on restart.
+    try:
+        CredentialService(SessionLocal()).hydrate_all()
+    except Exception as exc:  # noqa: BLE001 - credential hydration must not block startup
+        logger.warning("encrypted credential hydration failed at startup: %s", exc)
     # Start the persisted scheduler worker (one loop per process; the
     # worker refuses duplicates and claims due runs atomically in the DB,
     # so restarts and multiple uvicorn workers stay safe).

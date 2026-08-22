@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1 import agents as agents_router
 from app.api.v1 import ai as ai_router
 from app.api.v1 import capabilities as capabilities_router
+from app.api.v1 import credentials as credentials_router
 from app.api.v1 import development as development_router
 from app.api.v1 import executions as executions_router
 from app.api.v1 import goals as goals_router
@@ -48,3 +49,4 @@ api_router.include_router(agents_router.router, prefix="/v1/agents", tags=["agen
 api_router.include_router(capabilities_router.router, prefix="/v1/capabilities", tags=["capabilities"])
 api_router.include_router(integrations_router.router, prefix="/v1/integrations", tags=["integrations"])
 api_router.include_router(webhooks_router.router, prefix="/v1", tags=["webhooks"])
+api_router.include_router(credentials_router.router, prefix="/v1/credentials", tags=["credentials"])

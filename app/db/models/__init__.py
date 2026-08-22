@@ -1,4 +1,5 @@
 from .agent import Agent
+from .credential import EncryptedCredential
 from .capability import Capability, CapabilityStatus
 from .event import EventRecord, EventStatus
 from .execution import Execution, ExecutionStatus
@@ -18,6 +19,7 @@ from .workflow import Workflow, WorkflowStatus
 __all__ = [
     "AbandonedCartStatus",
     "Agent",
+    "EncryptedCredential",
     "Capability",
     "CapabilityStatus",
     "EventRecord",
