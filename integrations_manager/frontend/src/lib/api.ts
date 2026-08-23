@@ -122,9 +122,10 @@ export function testConnection(slug: string) {
 }
 
 export function connectIntegration(slug: string) {
-  return request<{ redirect_url?: string }>(`/integrations/${slug}/connect`, {
-    method: 'POST',
-  });
+  return request<{ success: boolean; message: string; redirect_url?: string }>(
+    `/integrations/${slug}/connect`,
+    { method: 'POST' },
+  );
 }
 
 export function disconnectIntegration(slug: string) {
