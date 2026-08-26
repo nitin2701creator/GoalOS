@@ -13,6 +13,7 @@ from .skill import Skill
 from .task import Task
 from .social import SocialAccount, SocialMetric, SocialPost
 from .woocommerce_cart import AbandonedCartStatus, WooCommerceAbandonedCart, WooCommerceAbandonedCartItem
+from .viral import ViralContentItem, ViralIdea
 from .woocommerce_order import WooCommerceOrder, WooCommerceOrderItem
 from .workflow import Workflow, WorkflowStatus
 
@@ -44,6 +45,8 @@ __all__ = [
     "WooCommerceAbandonedCartItem",
     "WooCommerceOrder",
     "WooCommerceOrderItem",
+    "ViralContentItem",
+    "ViralIdea",
     "Workflow",
     "WorkflowStatus",
 ]
