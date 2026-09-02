@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+# Exclude third-party vendored repos from collection — they shadow the
+# top-level ``tests`` package and break cross-module test imports.
+collect_ignore_glob = ["external/**", ".venv/**"]
