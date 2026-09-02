@@ -3,19 +3,24 @@ from fastapi import APIRouter
 from app.api.v1 import agents as agents_router
 from app.api.v1 import ai as ai_router
 from app.api.v1 import capabilities as capabilities_router
+from app.api.v1 import communications as communications_router
 from app.api.v1 import credentials as credentials_router
 from app.api.v1 import development as development_router
 from app.api.v1 import executions as executions_router
 from app.api.v1 import goals as goals_router
 from app.api.v1 import integrations as integrations_router
+from app.api.v1 import memory_api as memory_router
 from app.api.v1 import objectives as objectives_router
 from app.api.v1 import planning as planning_router
 from app.api.v1 import projects as projects_router
 from app.api.v1 import schedules as schedules_router
 from app.api.v1 import social as social_router
+from app.api.v1 import system as system_router
 from app.api.v1 import tasks as tasks_router
 from app.api.v1 import viral_ideas as viral_router
 from app.api.v1 import webhooks as webhooks_router
+from app.api.v1 import video_production as video_router
+from app.api.v1 import whatsapp_api as whatsapp_router
 from app.api.v1 import workflows as workflows_router
 
 api_router = APIRouter()
@@ -52,3 +57,8 @@ api_router.include_router(integrations_router.router, prefix="/v1/integrations",
 api_router.include_router(webhooks_router.router, prefix="/v1", tags=["webhooks"])
 api_router.include_router(viral_router.router, prefix="/v1/viral", tags=["viral"])
 api_router.include_router(credentials_router.router, prefix="/v1/credentials", tags=["credentials"])
+api_router.include_router(system_router.router, prefix="/v1/system", tags=["system"])
+api_router.include_router(memory_router.router, prefix="/v1/memory", tags=["memory"])
+api_router.include_router(communications_router.router, prefix="/v1/communications", tags=["communications"])
+api_router.include_router(video_router.router, prefix="/v1/video", tags=["video"])
+api_router.include_router(whatsapp_router.router, prefix="/v1/whatsapp", tags=["whatsapp"])

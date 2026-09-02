@@ -89,7 +89,7 @@ def test_seed_persists_builtin_catalog(tmp_path: Path) -> None:
     assert "seo_audit" in names
     assert "web_search" in names
     assert "website_crawl" in names
-    assert "whatsapp_send" in names
+    assert "whatsapp_send_message" in names
     assert "memory_store" in names
 
 
@@ -140,12 +140,12 @@ def test_resolve_for_goal_maps_execution_capabilities(tmp_path: Path) -> None:
 
 def test_unavailable_capability_reports_not_configured(tmp_path: Path) -> None:
     service = _service(_session_factory(tmp_path)())
-    resolved = service.resolve("whatsapp_send")
+    resolved = service.resolve("whatsapp_send_message")
     assert resolved.exists is True
     assert resolved.available is False
     assert "INTEGRATION_NOT_CONFIGURED" in (resolved.reason or "")
 
-    result = service.execute("whatsapp_send", {}, {Permission.SEND_WHATSAPP})
+    result = service.execute("whatsapp_send_message", {}, {Permission.SEND_WHATSAPP})
     assert result.status == "INTEGRATION_NOT_CONFIGURED"
 
 
@@ -347,13 +347,13 @@ def test_required_unavailable_capability_still_reports_not_configured(
     """Restrictions never mask a genuinely required unavailable capability."""
     service = _service(_session_factory(tmp_path)())
     requirement = (
-        "Use ONLY whatsapp_send to send a WhatsApp message to the customer."
+        "Use ONLY whatsapp_send_message to send a WhatsApp message to the customer."
     )
     resolution = service.resolve_for_goal(requirement)
-    # whatsapp_send is registered (execution-only, no catalog mapping) so
+    # whatsapp_send_message is registered (execution-only, no catalog mapping) so
     # the whitelist keeps it and nothing else.
-    assert resolution.capabilities == ["whatsapp_send"]
-    result = service.execute("whatsapp_send", {}, {Permission.SEND_WHATSAPP})
+    assert resolution.capabilities == ["whatsapp_send_message"]
+    result = service.execute("whatsapp_send_message", {}, {Permission.SEND_WHATSAPP})
     assert result.status == "INTEGRATION_NOT_CONFIGURED"
 
 
@@ -423,4 +423,4 @@ def test_restart_durability(tmp_path: Path) -> None:
     assert restarted.get_by_name("custom_persisted") is not None
     names = {capability.name for capability in restarted.list()}
     assert "seo_audit" in names
-    assert "whatsapp_send" in names
+    assert "whatsapp_send_message" in names

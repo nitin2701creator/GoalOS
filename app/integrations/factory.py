@@ -13,6 +13,11 @@ from sqlalchemy.orm import Session
 
 from app.integrations.connector_registry import ConnectorRegistry
 from app.integrations.email.providers.gmail_provider import GmailProvider
+from app.integrations.external.crawl4ai import Crawl4AIConnector
+from app.integrations.external.memory import MemoryConnector
+from app.integrations.external.searxng import SearXNGConnector
+from app.integrations.external.calling import CallingConnector
+from app.integrations.external.whatsapp import OpenWAConnector, WacrmConnector
 from app.integrations.google_analytics import GoogleAnalyticsConnector
 from app.integrations.google_calendar import GoogleCalendarConnector
 from app.integrations.google_drive import GoogleDriveConnector
@@ -40,11 +45,17 @@ SUPPORTED_INTEGRATIONS: tuple[str, ...] = (
     "woocommerce",
     "google_analytics",
     "meta_ads",
+    "meta_social",
     "scheduler",
     "twenty",
     "linkedin",
     "social",
     "n8n",
+    "reddit",
+    "twitter",
+    "whatsapp",
+    "wacrm",
+    "calling",
 )
 
 #: Capability-prefix → registry-name aliases. Connector capability names
@@ -70,11 +81,17 @@ INTEGRATION_TYPES: dict[str, str] = {
     "woocommerce": "commerce",
     "google_analytics": "analytics",
     "meta_ads": "advertising",
+    "meta_social": "social",
     "scheduler": "scheduler",
     "twenty": "crm",
     "linkedin": "social",
     "social": "social",
     "n8n": "automation",
+    "reddit": "social",
+    "twitter": "social",
+    "whatsapp": "communication",
+    "wacrm": "communication",
+    "calling": "communication",
 }
 
 
@@ -139,6 +156,15 @@ def build_default_registry(
     social.register_provider("reddit", reddit_connector)
     registry.register(social)
     registry.register(N8NConnector(client=client or HttpClient()))
+
+    # External capability adapters (WhatsApp, Memory, Web/SEO, Search)
+    registry.register(OpenWAConnector())
+    registry.register(WacrmConnector())
+    registry.register(CallingConnector())
+    registry.register(MemoryConnector())
+    registry.register(Crawl4AIConnector())
+    registry.register(SearXNGConnector())
+
     return registry
 
 

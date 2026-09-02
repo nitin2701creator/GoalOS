@@ -1,6 +1,6 @@
-"""Chat service bridging OpenWebUI requests to the GoalOS autonomous system.
+"""Chat service bridging LibreChat requests to the GoalOS autonomous system.
 
-The service turns an OpenWebUI conversation message into a GoalOS action
+The service turns a LibreChat conversation message into a GoalOS action
 using only the existing architecture:
 
 - ``create_agent`` intent: capability resolution → AgentFactory
@@ -313,12 +313,12 @@ class ChatService:
         Reuses the existing GoalOS persistence exactly as the API does;
         every run leaves a traceable goal, project, and workflow.
         """
-        title = message.strip()[:120] or "OpenWebUI request"
+        title = message.strip()[:120] or "LibreChat request"
         goal = self.goal_service.create(
             GoalCreateRequest(
                 title=title,
                 description=message,
-                executive_owner="OpenWebUI",
+                executive_owner="LibreChat",
                 department="Autonomous",
                 priority="High",
             )

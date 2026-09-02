@@ -59,11 +59,8 @@ class OpenAICompatibleProvider(BaseProvider):
     def health_check(self) -> bool:
         """Return whether the provider is configured for real calls.
 
-        The OpenAI-compatible endpoint needs a base URL, a model, and an
-        API key before the executor should attempt a run.
+        The OpenAI-compatible endpoint needs a base URL and a model.
+        An API key is not always required — local providers such as
+        Ollama, vLLM, or LM Studio operate without one.
         """
-        return bool(
-            self._config.base_url
-            and self._config.default_model
-            and self._config.api_key
-        )
+        return bool(self._config.base_url and self._config.default_model)

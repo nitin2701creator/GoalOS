@@ -1,15 +1,15 @@
-"""OpenAI-compatible API for OpenWebUI.
+"""OpenAI-compatible API for LibreChat / OpenAI clients.
 
 GoalOS exposes ``GET /v1/models``, ``POST /v1/chat/completions`` and
-``GET /v1/health`` in the OpenAI wire format so OpenWebUI (deployed on
+``GET /v1/health`` in the OpenAI wire format so LibreChat (deployed on
 the same KVM) can talk to GoalOS directly. The endpoints never answer
 from a prompt: they route through the existing GoalOS autonomous system
 (agent factory → skills → integrations → workflow orchestrator) exactly
 as the rest API does.
 
 Authentication: every ``/v1/*`` endpoint requires ``Authorization:
-Bearer <GOALOS_OPENWEBUI_API_KEY>`` using a constant-time comparison.
-The key is never logged.
+Bearer <GOALOS_API_KEY>`` (or the legacy ``GOALOS_OPENWEBUI_API_KEY``)
+using a constant-time comparison. The key is never logged.
 """
 
 from __future__ import annotations
@@ -42,9 +42,16 @@ _GOALOS_VERSION = "0.5.0"
 
 
 def _api_key() -> str | None:
-    """Return the configured OpenWebUI API key, if any."""
-    value = os.getenv("GOALOS_OPENWEBUI_API_KEY")
-    return value.strip() if value and value.strip() else None
+    """Return the configured API key, if any.
+
+    Accepts the new ``GOALOS_API_KEY`` name or the legacy
+    ``GOALOS_OPENWEBUI_API_KEY`` for backward compatibility.
+    """
+    for var in ("GOALOS_API_KEY", "GOALOS_OPENWEBUI_API_KEY"):
+        value = os.getenv(var)
+        if value and value.strip():
+            return value.strip()
+    return None
 
 
 def _authenticate(request: Request) -> None:
@@ -56,10 +63,10 @@ def _authenticate(request: Request) -> None:
     """
     configured = _api_key()
     if configured is None:
-        raise HTTPException(
-            status_code=503,
-            detail="GOALOS_OPENWEBUI_API_KEY is not configured",
-        )
+            raise HTTPException(
+                status_code=503,
+                detail="GOALOS_API_KEY is not configured",
+            )
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
     if scheme.casefold() != "bearer" or not token:
         raise HTTPException(status_code=401, detail="missing bearer token")

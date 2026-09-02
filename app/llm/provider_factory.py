@@ -14,7 +14,7 @@ class ProviderFactory:
 
     @staticmethod
     def create() -> BaseProvider:
-        provider_name = os.getenv("LLM_PROVIDER", "freellm").lower()
+        provider_name = os.getenv("LLM_PROVIDER", "openai_compatible").lower()
         if provider_name == "freellm":
             return FreeLLMProvider()
         if provider_name in {"openai", "openai_compatible"}:

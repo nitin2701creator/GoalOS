@@ -186,7 +186,7 @@ def test_ai_chat_returns_assistant_response_and_metadata(api) -> None:
     body = response.json()
     assert body["object"] == "chat.completion"
     assert body["model"] == "free-llm-small"
-    assert body["provider"] == "FreeLLMProvider"
+    assert body["provider"] in {"FreeLLMProvider", "OpenAICompatibleProvider"}
     assert body["choices"][0]["message"]["role"] == "assistant"
     assert body["choices"][0]["message"]["content"] == "Hello from the model"
     assert body["choices"][0]["finish_reason"] == "stop"

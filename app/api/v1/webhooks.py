@@ -14,6 +14,11 @@ Inbound webhook endpoints:
   delivered by the WordPress bridge, authenticated with a bearer token
   (``GOALOS_ABANDONED_CART_WEBHOOK_SECRET``).
 
+- ``POST /api/v1/webhooks/openwa`` — OpenWA WhatsApp gateway events.
+  Validates the webhook signature (HMAC-SHA256 with OPENWA_WEBHOOK_SECRET)
+  when configured, parses the event, and routes through the WhatsApp
+  auto-reply agent or basic processing pipeline.
+
 - ``GET /api/v1/webhooks/events`` — Lists persisted events for operations.
 """
 
@@ -43,6 +48,173 @@ from app.services.woocommerce_webhook_service import (
 )
 
 router = APIRouter()
+
+
+# --------------------------------------------------------------------- #
+# OpenWA WhatsApp gateway                                                #
+# --------------------------------------------------------------------- #
+
+@router.post(
+    "/webhooks/openwa",
+    summary="Ingest an OpenWA WhatsApp webhook event",
+    description=(
+        "Receive WhatsApp events from an OpenWA gateway instance. "
+        "Validates the webhook signature (HMAC-SHA256 with "
+        "OPENWA_WEBHOOK_SECRET) when configured. Routes through the "
+        "auto-reply agent when WHATSAPP_AUTO_REPLY_ENABLED=true, "
+        "otherwise through basic message processing."
+    ),
+)
+async def ingest_openwa_webhook(
+    request: Request,
+    db=Depends(get_db),
+):
+    import hashlib
+    import hmac as hmac_mod
+    import json
+    import os
+
+    raw_body = await request.body()
+
+    # Signature verification (when secret is configured)
+    webhook_secret = os.getenv("OPENWA_WEBHOOK_SECRET", "").strip()
+    if webhook_secret:
+        signature = request.headers.get("X-Webhook-Signature", "")
+        if not signature:
+            # Also check common alternatives
+            signature = request.headers.get("X-Hub-Signature-256", "")
+        if not signature:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing webhook signature",
+            )
+        expected = hmac_mod.new(
+            webhook_secret.encode(), raw_body, hashlib.sha256
+        ).hexdigest()
+        if not hmac_mod.compare_digest(expected, signature):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid webhook signature",
+            )
+
+    # Parse payload
+    try:
+        payload = json.loads(raw_body.decode())
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid JSON payload",
+        )
+
+    # Parse with OpenWA adapter
+    from app.integrations.whatsapp.factory import get_active_provider
+    provider = get_active_provider()
+    if provider is None:
+        return {"received": True, "processed": False, "reason": "no_provider"}
+
+    event = provider.parse_webhook(payload)
+    if event is None:
+        return {"received": True, "processed": False, "reason": "unrecognized_payload"}
+
+    # Route through agent or basic processing
+    from app.services.whatsapp_agent import _is_auto_reply_enabled, handle_inbound_message
+    from app.services.whatsapp_service import process_inbound
+
+    if _is_auto_reply_enabled() and event.event_type.value == "message.received":
+        result = handle_inbound_message(event, db=db)
+    else:
+        result = process_inbound(event, db=db)
+    result["received"] = True
+    return result
+
+
+# --------------------------------------------------------------------- #
+# WACRM WhatsApp Business API                                           #
+# --------------------------------------------------------------------- #
+
+@router.post(
+    "/webhooks/wacrm",
+    summary="Ingest a WACRM WhatsApp webhook event",
+    description=(
+        "Receive WhatsApp events from a WACRM instance. "
+        "Validates the webhook signature (HMAC-SHA256 with "
+        "WACRM_WEBHOOK_SECRET) when configured. Routes through the "
+        "auto-reply agent when WHATSAPP_AUTO_REPLY_ENABLED=true, "
+        "otherwise through basic message processing."
+    ),
+)
+async def ingest_wacrm_webhook(
+    request: Request,
+    db=Depends(get_db),
+):
+    import hashlib
+    import hmac as hmac_mod
+    import json
+    import os
+
+    raw_body = await request.body()
+
+    # Signature verification
+    webhook_secret = os.getenv("WACRM_WEBHOOK_SECRET", "").strip()
+    if webhook_secret:
+        signature = request.headers.get("X-Wacrm-Signature", "")
+        if not signature:
+            signature = request.headers.get("X-Hub-Signature-256", "")
+        if not signature:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing webhook signature",
+            )
+        expected = hmac_mod.new(
+            webhook_secret.encode(), raw_body, hashlib.sha256
+        ).hexdigest()
+        if not hmac_mod.compare_digest(expected, signature):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid webhook signature",
+            )
+
+    # Parse payload
+    try:
+        payload = json.loads(raw_body.decode())
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid JSON payload",
+        )
+
+    # Parse with WACRM adapter
+    from app.integrations.whatsapp.wacrm_adapter import WacrmWhatsAppAdapter
+    from app.integrations.whatsapp.base import WhatsAppConfig
+
+    adapter_config = WhatsAppConfig(
+        provider="wacrm",
+        api_base_url=os.getenv("WACRM_API_URL", ""),
+        webhook_secret=webhook_secret,
+    )
+    adapter = WacrmWhatsAppAdapter(config=adapter_config)
+
+    event = adapter.parse_webhook(payload)
+    if event is None:
+        return {"received": True, "processed": False, "reason": "unrecognized_payload"}
+
+    # Deduplication
+    delivery_id = payload.get("id", "")
+    if delivery_id:
+        from app.services.whatsapp_agent import _is_duplicate
+        if _is_duplicate(delivery_id):
+            return {"received": True, "processed": False, "reason": "duplicate"}
+
+    # Route through agent or basic processing
+    from app.services.whatsapp_agent import _is_auto_reply_enabled, handle_inbound_message
+    from app.services.whatsapp_service import process_inbound
+
+    if _is_auto_reply_enabled() and event.event_type.value == "message.received":
+        result = handle_inbound_message(event, db=db)
+    else:
+        result = process_inbound(event, db=db)
+    result["received"] = True
+    return result
 
 
 # --------------------------------------------------------------------- #

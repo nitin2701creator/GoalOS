@@ -15,3 +15,6 @@ goalos.db
 .env.*
 !.env.example
 !env.example
+
+# External cloned repositories (not part of GoalOS source)
+external/

@@ -96,12 +96,12 @@ def test_list_capabilities_with_availability(api) -> None:
     body = response.json()
     assert body["total"] >= 20
     names = {item["name"] for item in body["capabilities"]}
-    assert {"seo_audit", "web_search", "website_crawl", "whatsapp_send"} <= names
+    assert {"seo_audit", "web_search", "website_crawl", "whatsapp_send_message"} <= names
     by_name = {item["name"]: item for item in body["capabilities"]}
     # Honest availability: website crawl works without config, WhatsApp does not.
     assert by_name["website_crawl"]["available"] is True
-    assert by_name["whatsapp_send"]["available"] is False
-    assert "INTEGRATION_NOT_CONFIGURED" in by_name["whatsapp_send"]["availability_reason"]
+    assert by_name["whatsapp_send_message"]["available"] is False
+    assert "INTEGRATION_NOT_CONFIGURED" in by_name["whatsapp_send_message"]["availability_reason"]
 
 
 def test_register_capability_idempotent(api) -> None:

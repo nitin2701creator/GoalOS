@@ -15,11 +15,18 @@ from integrations_manager.app.providers.meta import MetaProvider
 from integrations_manager.app.providers.linkedin import LinkedInProvider
 from integrations_manager.app.providers.twitter import TwitterProvider
 from integrations_manager.app.providers.reddit import RedditProvider
+from integrations_manager.app.providers.openwa import OpenWAProvider
+from integrations_manager.app.providers.wacrm import WacrmProvider
+from integrations_manager.app.providers.calling import CallingProvider
+from integrations_manager.app.providers.openmontage import OpenMontageProvider
 
 
 class TestProviderRegistry:
     def test_all_providers_registered(self):
-        expected = {"woocommerce", "google_analytics", "meta", "linkedin", "twitter", "reddit"}
+        expected = {
+            "woocommerce", "google_analytics", "meta", "linkedin", "twitter", "reddit",
+            "openwa", "wacrm", "calling", "openmontage",
+        }
         assert set(PROVIDER_REGISTRY.keys()) == expected
 
     def test_all_providers_are_subclasses(self):
@@ -40,6 +47,10 @@ class TestProviderInfo:
         ("linkedin", "LinkedIn"),
         ("twitter", "X / Twitter"),
         ("reddit", "Reddit"),
+        ("openwa", "WhatsApp / OpenWA"),
+        ("wacrm", "WhatsApp / WACRM"),
+        ("calling", "Calling / Telephony"),
+        ("openmontage", "Video Production / OpenMontage"),
     ])
     def test_info_returns_correct_name(self, slug, expected_name):
         provider = PROVIDER_REGISTRY[slug]()
@@ -147,3 +158,58 @@ class TestProviderTestConnection:
             provider = PROVIDER_REGISTRY[slug]()
             info = await provider.get_account_info({})
             assert "error" in info
+
+    @pytest.mark.asyncio
+    async def test_openwa_no_base_url(self):
+        provider = OpenWAProvider()
+        result = await provider.test_connection({})
+        assert result.success is False
+        assert "Base URL" in result.message
+
+    @pytest.mark.asyncio
+    async def test_wacrm_no_base_url(self):
+        provider = WacrmProvider()
+        result = await provider.test_connection({})
+        assert result.success is False
+        assert "Base URL" in result.message
+
+    @pytest.mark.asyncio
+    async def test_wacrm_no_api_key(self):
+        provider = WacrmProvider()
+        result = await provider.test_connection({"base_url": "http://localhost:3000"})
+        assert result.success is False
+        assert "API key" in result.message
+
+    @pytest.mark.asyncio
+    async def test_calling_no_base_url(self):
+        provider = CallingProvider()
+        result = await provider.test_connection({})
+        assert result.success is False
+        assert "No telephony provider" in result.message
+
+    @pytest.mark.asyncio
+    async def test_openmontage_no_path(self):
+        provider = OpenMontageProvider()
+        result = await provider.test_connection({})
+        assert result.success is False
+        assert "Installation path" in result.message
+
+    @pytest.mark.asyncio
+    async def test_openmontage_no_oauth(self):
+        provider = OpenMontageProvider()
+        assert provider.get_oauth_config() is None
+
+    @pytest.mark.asyncio
+    async def test_openwa_no_oauth(self):
+        provider = OpenWAProvider()
+        assert provider.get_oauth_config() is None
+
+    @pytest.mark.asyncio
+    async def test_wacrm_no_oauth(self):
+        provider = WacrmProvider()
+        assert provider.get_oauth_config() is None
+
+    @pytest.mark.asyncio
+    async def test_calling_no_oauth(self):
+        provider = CallingProvider()
+        assert provider.get_oauth_config() is None

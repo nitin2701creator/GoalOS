@@ -53,24 +53,30 @@ app = FastAPI(
 
 
 def _cors_origins() -> list[str]:
-    """CORS allow-list: the configured OpenWebUI origin plus dev defaults.
+    """CORS allow-list: LibreChat, dev defaults, and configured origins.
 
-    Production never assumes localhost — set OPENWEBUI_BASE_URL to the
-    OpenWebUI origin (e.g. ``https://openwebui.kvm.local``) and it is used
-    verbatim; the defaults only cover local development.
+    Production never assumes localhost — set GOALOS_CORS_ORIGINS to a
+    comma-separated list of allowed origins, or use the default
+    which covers LibreChat on port 3080 and common dev ports.
     """
     origins = []
-    openwebui = os.getenv("OPENWEBUI_BASE_URL")
-    if openwebui and openwebui.strip():
-        origins.append(openwebui.strip())
+    custom = os.getenv("GOALOS_CORS_ORIGINS")
+    if custom and custom.strip():
+        origins.extend(o.strip() for o in custom.split(",") if o.strip())
     origins.extend(
         [
+            "http://localhost:3080",
             "http://localhost:3000",
             "http://localhost:5173",
+            "http://127.0.0.1:3080",
             "http://127.0.0.1:3000",
             "http://127.0.0.1:5173",
         ]
     )
+    # Legacy env var for backward compatibility.
+    openwebui = os.getenv("OPENWEBUI_BASE_URL")
+    if openwebui and openwebui.strip():
+        origins.append(openwebui.strip())
     return list(dict.fromkeys(origins))
 
 
@@ -85,7 +91,7 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api")
 app.include_router(po_router)
 app.include_router(dashboard_router)
-# OpenAI-compatible surface for OpenWebUI (mounted at /v1/models,
+# OpenAI-compatible surface for LibreChat (mounted at /v1/models,
 # /v1/chat/completions, /v1/health — separate from the /api namespace).
 app.include_router(openai_router, prefix="/v1")
 

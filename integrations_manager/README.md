@@ -17,6 +17,10 @@ A secure, centralized dashboard for managing credentials for all GoalOS integrat
 
 | Integration | Auth Type | Capabilities |
 |---|---|---|
+| WhatsApp / OpenWA | API Key | Send/receive messages, sessions, webhooks |
+| WhatsApp / WACRM | API Key | Meta Business Cloud API, contacts, conversations, templates |
+| Calling / Telephony | API Key | Voice calling (coming soon) |
+| Video / OpenMontage | Local Install | 12 video pipelines, 100+ tools |
 | WooCommerce | API Key | Store URL, Consumer Key/Secret |
 | Google Analytics 4 | OAuth 2.0 | Property discovery, analytics |
 | Meta / Facebook | OAuth 2.0 | Pages, Instagram, insights |

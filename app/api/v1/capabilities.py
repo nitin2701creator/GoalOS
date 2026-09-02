@@ -8,6 +8,8 @@ PERMISSION_DENIED.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.db.session import get_db
@@ -49,6 +51,39 @@ def list_capabilities(service: CapabilityService = Depends(_get_service)):
     """List every registered capability with its honest availability."""
     capabilities = service.list_with_status()
     return {"capabilities": capabilities, "total": len(capabilities)}
+
+
+@router.get("/discovery")
+def discover_capabilities(service: CapabilityService = Depends(_get_service)):
+    """Capability discovery endpoint for LibreChat and external consumers.
+
+    Returns a simplified catalog optimized for tool/function-calling
+    integrations: each capability includes its name, description,
+    input/output schemas, required permissions, and approval status.
+    Only enabled capabilities are included.
+    """
+    service.ensure_seeded()
+    tools: list[dict[str, Any]] = []
+    for capability in service.repository.list():
+        if not capability.enabled:
+            continue
+        tools.append({
+            "name": capability.name,
+            "description": capability.description,
+            "category": capability.category,
+            "provider": capability.provider,
+            "provider_type": capability.provider_type,
+            "input_schema": capability.input_schema or {},
+            "output_schema": capability.output_schema or {},
+            "required_permissions": capability.required_permissions,
+            "requires_approval": capability.requires_approval,
+            "implementation": capability.implementation,
+        })
+    return {
+        "tools": tools,
+        "total": len(tools),
+        "categories": sorted({t["category"] for t in tools}),
+    }
 
 
 @router.post("", response_model=CapabilityResponse, status_code=status.HTTP_201_CREATED)

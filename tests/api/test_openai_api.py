@@ -1,6 +1,6 @@
-"""API tests for the OpenWebUI-compatible GoalOS interface.
+"""API tests for the LibreChat-compatible GoalOS interface.
 
-Proves the required production flow: OpenWebUI-compatible request →
+Proves the required production flow: LibreChat-compatible request →
 ``/v1/chat/completions`` → GoalOS agent factory → skill/integration
 resolution → workflow execution → persisted results → OpenAI-format
 response. External services run through the shared fake HTTP transport;
@@ -34,8 +34,8 @@ RUN_SEO_ANALYSIS = (
 
 @pytest.fixture
 def api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """TestClient with an isolated DB and the OpenWebUI API key configured."""
-    monkeypatch.setenv("GOALOS_OPENWEBUI_API_KEY", API_KEY)
+    """TestClient with an isolated DB and the API key configured."""
+    monkeypatch.setenv("GOALOS_API_KEY", API_KEY)
     engine = create_engine(
         f"sqlite:///{tmp_path / 'openai_e2e.db'}",
         connect_args={"check_same_thread": False},
@@ -93,11 +93,12 @@ def test_auth_rejects_invalid_key(api) -> None:
 
 
 def test_auth_required_when_key_missing(api, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Without GOALOS_OPENWEBUI_API_KEY the API refuses to serve /v1."""
-    monkeypatch.delenv("GOALOS_OPENWEBUI_API_KEY")
+    """Without GOALOS_API_KEY the API refuses to serve /v1."""
+    monkeypatch.delenv("GOALOS_API_KEY", raising=False)
+    monkeypatch.delenv("GOALOS_OPENWEBUI_API_KEY", raising=False)
     response = api.get("/v1/models", headers=AUTH)
     assert response.status_code == 503
-    assert "GOALOS_OPENWEBUI_API_KEY" in response.json()["detail"]
+    assert "GOALOS_API_KEY" in response.json()["detail"]
 
     chat = _chat(api, [{"role": "user", "content": CREATE_SEO_AGENT}])
     assert chat.status_code == 503
