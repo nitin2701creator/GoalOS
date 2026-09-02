@@ -17,7 +17,7 @@ goalos.db
 !env.example
 
 # External cloned repositories (not part of GoalOS source)
-external/
+/external/
 
 # Runtime databases, logs and backups
 *.log
