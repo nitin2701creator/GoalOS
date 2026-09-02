@@ -18,3 +18,10 @@ goalos.db
 
 # External cloned repositories (not part of GoalOS source)
 external/
+
+# Runtime databases, logs and backups
+*.log
+*.db-shm
+*.db-wal
+*.db.backup-*
+*.bak.*
