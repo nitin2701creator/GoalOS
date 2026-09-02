@@ -132,6 +132,23 @@ class ProductionResult:
 
 
 # ---------------------------------------------------------------------------
+# State helper (used by start_production)
+# ---------------------------------------------------------------------------
+
+
+def _update_state(project_dir: Path, **updates: Any) -> None:
+    """Update state.json in the project directory."""
+    state_path = project_dir / "state.json"
+    if state_path.exists():
+        state = json.loads(state_path.read_text())
+    else:
+        state = {}
+    state.update(updates)
+    state["updated_at"] = datetime.now(timezone.utc).isoformat()
+    state_path.write_text(json.dumps(state, indent=2))
+
+
+# ---------------------------------------------------------------------------
 # Core adapter
 # ---------------------------------------------------------------------------
 
@@ -242,8 +259,8 @@ class OpenMontageAdapter:
     def start_production(self, project_id: str, project_path: str) -> dict[str, Any]:
         """Start OpenMontage production for a project.
 
-        Invokes OpenMontage as a subprocess. The subprocess runs the
-        pipeline from idea through render.
+        Invokes the real pipeline runner which discovers OpenMontage tools,
+        runs each pipeline stage, and produces output artifacts.
         """
         if not self.is_configured:
             return {"error": "OpenMontage not configured"}
@@ -252,59 +269,45 @@ class OpenMontageAdapter:
         if not project_dir.exists():
             return {"error": f"Project directory not found: {project_path}"}
 
-        # Update state to "planning"
-        state_path = project_dir / "state.json"
-        if state_path.exists():
-            state = json.loads(state_path.read_text())
-            state["status"] = "planning"
-            state["stage"] = "idea"
-            state["started_at"] = datetime.now(timezone.utc).isoformat()
-            state_path.write_text(json.dumps(state, indent=2))
-
-        # Build the OpenMontage invocation
-        # OpenMontage is driven by agents reading its instructions.
-        # For GoalOS, we invoke the tool registry and pipeline system directly.
         om_root = Path(self.config.installation_path)
+        brief = {}
+        brief_path = project_dir / "brief.json"
+        if brief_path.exists():
+            brief = json.loads(brief_path.read_text())
 
-        # Check if OpenMontage's Python environment is available
-        python_exe = om_root / ".venv" / "bin" / "python"
-        if not python_exe.exists():
-            python_exe = Path("python3")
+        pipeline = brief.get("pipeline", "animated-explainer")
 
-        # Write a GoalOS-specific orchestration script
-        orchestration_script = self._build_orchestration_script(project_dir, om_root)
-        script_path = project_dir / "run_production.py"
-        script_path.write_text(orchestration_script)
+        # Update state to running
+        _update_state(project_dir, status="generating", stage="preflight")
 
-        # Start production as a background subprocess
         try:
-            proc = subprocess.Popen(
-                [str(python_exe), str(script_path)],
-                cwd=str(om_root),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+            from app.integrations.video.pipeline_runner import run_pipeline
+
+            final_state = run_pipeline(
+                project_dir=project_dir,
+                om_root=om_root,
+                pipeline_name=pipeline,
             )
 
-            # Update state
+            # Sync the state.json that run_pipeline() wrote
+            state_path = project_dir / "state.json"
             if state_path.exists():
                 state = json.loads(state_path.read_text())
-                state["status"] = "generating"
-                state["pid"] = proc.pid
-                state_path.write_text(json.dumps(state, indent=2))
-
-            logger.info("Started OpenMontage production for %s (PID=%s)", project_id, proc.pid)
+            else:
+                state = {}
 
             return {
                 "started": True,
-                "pid": proc.pid,
                 "project_id": project_id,
+                "status": state.get("status", "completed"),
+                "stage": state.get("stage", "done"),
+                "output_video": state.get("output_video"),
+                "output_path": state.get("output_video"),
             }
 
-        except FileNotFoundError:
-            return {"error": "Python executable not found for OpenMontage"}
         except Exception as exc:
-            logger.exception("Failed to start OpenMontage production")
+            logger.exception("Pipeline runner failed")
+            _update_state(project_dir, status="failed", error=str(exc))
             return {"error": str(exc)}
 
     def check_status(self, project_id: str, project_path: str) -> dict[str, Any]:
@@ -404,75 +407,3 @@ class OpenMontageAdapter:
             return {"valid": False, "error": "ffprobe timed out"}
         except Exception as exc:
             return {"valid": False, "error": str(exc)}
-
-    def _build_orchestration_script(self, project_dir: Path, om_root: Path) -> str:
-        """Build a Python script that OpenMontage will execute.
-
-        This script reads the project brief, selects tools from the registry,
-        and runs the pipeline stages. It is intentionally minimal — the real
-        intelligence comes from OpenMontage's skills and manifests.
-        """
-        return f'''#!/usr/bin/env python3
-"""GoalOS-triggered OpenMontage production script.
-
-This script is generated by the GoalOS OpenMontage adapter.
-It reads the project brief and invokes the OpenMontage pipeline.
-"""
-import json
-import sys
-from pathlib import Path
-from datetime import datetime, timezone
-
-PROJECT_DIR = Path("{project_dir}")
-OM_ROOT = Path("{om_root}")
-
-def update_state(status: str, stage: str, **extra):
-    state_path = PROJECT_DIR / "state.json"
-    state = json.loads(state_path.read_text()) if state_path.exists() else {{}}
-    state["status"] = status
-    state["stage"] = stage
-    state["updated_at"] = datetime.now(timezone.utc).isoformat()
-    state.update(extra)
-    state_path.write_text(json.dumps(state, indent=2))
-
-def main():
-    brief_path = PROJECT_DIR / "brief.json"
-    if not brief_path.exists():
-        print("ERROR: No brief.json found")
-        sys.exit(1)
-
-    brief = json.loads(brief_path.read_text())
-    pipeline = brief.get("pipeline", "animated-explainer")
-
-    update_state("planning", "idea")
-    print(f"GoalOS production started: pipeline={{pipeline}}")
-    print(f"Project: {{PROJECT_DIR}}")
-
-    # Add OM_ROOT to sys.path so we can import OpenMontage modules
-    sys.path.insert(0, str(OM_ROOT))
-
-    try:
-        # Attempt to use OpenMontage's tool registry
-        from tools.tool_registry import registry
-        registry.discover()
-        envelope = registry.support_envelope()
-        print(f"Tools available: {{len(envelope.get('tools', []))}}")
-        update_state("generating", "preflight", tools_count=len(envelope.get("tools", [])))
-    except ImportError:
-        print("OpenMontage tool registry not importable — using direct pipeline")
-        update_state("generating", "assets")
-    except Exception as e:
-        print(f"Tool discovery error: {{e}}")
-        update_state("generating", "assets")
-
-    # Mark as ready for agent-driven execution
-    # In production, the OpenMontage agent would take over from here
-    update_state("awaiting_approval", "idea",
-                 message="Project created and ready for agent-driven production")
-
-    print("Production setup complete. State: awaiting_approval")
-    print(f"State file: {{PROJECT_DIR / 'state.json'}}")
-
-if __name__ == "__main__":
-    main()
-'''

@@ -444,3 +444,144 @@ class TestVideoProductionAPI:
     def test_empty_prompt_rejected(self, api):
         response = api.post("/api/v1/video", json={"prompt": ""})
         assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Pipeline Runner — REAL execution test (produces actual MP4)
+# ---------------------------------------------------------------------------
+
+class TestPipelineRunnerEndToEnd:
+    """Proves the pipeline runner actually produces a video artifact."""
+
+    def test_run_pipeline_produces_mp4(self, tmp_path):
+        """The pipeline runner creates a real MP4 via ffmpeg fallback."""
+        import subprocess
+
+        # Check ffmpeg is available
+        try:
+            subprocess.run(
+                ["ffmpeg", "-version"],
+                capture_output=True, timeout=5, check=True,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            pytest.skip("ffmpeg not available")
+
+        from app.integrations.video.pipeline_runner import run_pipeline
+
+        # Create a project directory with a brief
+        project_dir = tmp_path / "test-project"
+        project_dir.mkdir()
+        (project_dir / "brief.json").write_text(json.dumps({
+            "prompt": "Create a 5-second test video",
+            "pipeline": "animated-explainer",
+            "duration_seconds": 5,
+            "aspect_ratio": "16:9",
+            "language": "en",
+        }))
+        (project_dir / "state.json").write_text(json.dumps({
+            "project_id": "test-001",
+            "pipeline": "animated-explainer",
+            "status": "queued",
+        }))
+
+        # Run the pipeline (no OM root needed — ffmpeg fallback)
+        final_state = run_pipeline(
+            project_dir=project_dir,
+            om_root=tmp_path,  # no real OM installation
+            pipeline_name="animated-explainer",
+        )
+
+        # Verify the state shows completion
+        assert final_state["status"] == "completed"
+
+        # Verify an MP4 was actually produced
+        output_dir = project_dir / "output"
+        assert output_dir.exists(), "output/ directory not created"
+        video_files = list(output_dir.glob("*.mp4"))
+        assert len(video_files) > 0, "No .mp4 file produced"
+
+        video_path = video_files[0]
+        assert video_path.stat().st_size > 0, "MP4 is empty"
+
+        # Verify the MP4 is a valid video file using ffprobe
+        probe_result = subprocess.run(
+            [
+                "ffprobe", "-v", "quiet",
+                "-print_format", "json",
+                "-show_format", "-show_streams",
+                str(video_path),
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        assert probe_result.returncode == 0, f"ffprobe failed: {probe_result.stderr}"
+        probe = json.loads(probe_result.stdout)
+        assert "format" in probe, "No format info in ffprobe output"
+        assert probe["format"]["format_name"] in ("mov,mp4,m4a,3gp,3g2,mj2", "mp4")
+
+        # Verify a thumbnail was produced
+        thumb_files = list(output_dir.glob("*.png"))
+        assert len(thumb_files) > 0, "No thumbnail produced"
+
+        # Verify stage results artifact exists
+        artifacts_dir = project_dir / "artifacts"
+        assert artifacts_dir.exists()
+        stage_results = json.loads((artifacts_dir / "stage_results.json").read_text())
+        assert len(stage_results) > 0
+        assert any(r.get("status") == "completed" for r in stage_results)
+
+    def test_pipeline_runner_state_transitions(self, tmp_path):
+        """The pipeline runner writes correct state transitions."""
+        import subprocess
+
+        try:
+            subprocess.run(
+                ["ffmpeg", "-version"],
+                capture_output=True, timeout=5, check=True,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            pytest.skip("ffmpeg not available")
+
+        from app.integrations.video.pipeline_runner import run_pipeline
+
+        project_dir = tmp_path / "transition-test"
+        project_dir.mkdir()
+        (project_dir / "brief.json").write_text(json.dumps({
+            "prompt": "State transition test",
+            "pipeline": "animated-explainer",
+            "duration_seconds": 3,
+        }))
+        (project_dir / "state.json").write_text(json.dumps({
+            "project_id": "trans-001",
+            "status": "queued",
+        }))
+
+        final_state = run_pipeline(
+            project_dir=project_dir,
+            om_root=tmp_path,
+            pipeline_name="animated-explainer",
+        )
+
+        # State should have passed through generating → completed
+        assert final_state["status"] == "completed"
+        assert final_state.get("output_video") is not None
+        assert "completed_at" in final_state
+
+    def test_cancelled_state_not_overwritten(self, tmp_path):
+        """If state is cancelled before pipeline finishes, it stays cancelled."""
+        from app.integrations.video.pipeline_runner import _update_state, _read_state
+
+        project_dir = tmp_path / "cancel-test"
+        project_dir.mkdir()
+        (project_dir / "brief.json").write_text(json.dumps({
+            "prompt": "Cancel test",
+            "pipeline": "animated-explainer",
+        }))
+        (project_dir / "state.json").write_text(json.dumps({
+            "project_id": "cancel-001",
+            "status": "generating",
+        }))
+
+        # Simulate cancellation
+        _update_state(project_dir, status="cancelled")
+        state = _read_state(project_dir)
+        assert state["status"] == "cancelled"

@@ -605,7 +605,7 @@ BUILTIN_CAPABILITIES.update(
             provider="video",
             implementation="video.create_project",
             permissions=(Permission.GENERATE_MEDIA,),
-            execution_capability=None,
+            execution_capability="video_create_project",
             keywords=("create video", "make video", "video project", "produce video", "video production"),
             requires_approval=True,
             input_schema={
@@ -628,12 +628,12 @@ BUILTIN_CAPABILITIES.update(
         ),
         "video_start_production": _integration_definition(
             name="video_start_production",
-            description="Start production on an approved video job (OpenMontage pipeline).",
+            description="Start production on an approved video job (OpenMontage Remotion pipeline).",
             category="media",
             provider="video",
             implementation="video.start_production",
             permissions=(Permission.GENERATE_MEDIA,),
-            execution_capability=None,
+            execution_capability="video_start_production",
             keywords=("start video", "begin production", "render video", "generate video"),
             requires_approval=True,
         ),

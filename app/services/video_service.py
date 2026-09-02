@@ -130,7 +130,7 @@ class VideoProductionService:
         job.started_at = datetime.now(timezone.utc)
         self.db.commit()
 
-        # Start production
+        # Start production (synchronous — blocks until render completes)
         start_result = self.adapter.start_production(
             project_id=result["project_id"],
             project_path=result["project_path"],
@@ -139,14 +139,43 @@ class VideoProductionService:
         if start_result.get("error"):
             job.status = VideoJobStatus.FAILED.value
             job.error_message = start_result["error"]
+            job.current_stage = start_result.get("stage", "compose")
             self.db.commit()
-            return start_result
+            return {"error": start_result["error"], "job_id": str(job.id)}
 
-        job.status = VideoJobStatus.GENERATING.value
+        # Production succeeded — record the real artifacts
+        output_path = start_result.get("output_path") or start_result.get("output_video")
+        if output_path:
+            job.output_video_path = output_path
+            job.status = VideoJobStatus.COMPLETED.value
+            job.duration_actual = start_result.get("duration_seconds")
+            job.resolution = start_result.get("resolution", "")
+            job.output_metadata = {
+                "video_codec": start_result.get("video_codec", ""),
+                "audio_codec": start_result.get("audio_codec", ""),
+                "fps": start_result.get("fps", 0),
+                "frame_count": start_result.get("frame_count", 0),
+                "size_bytes": start_result.get("output_size_bytes", 0),
+                "render_time_seconds": start_result.get("render_time_seconds", 0),
+            }
+            job.completed_at = datetime.now(timezone.utc)
+            job.progress_percent = 100
+            job.current_stage = "done"
+        else:
+            job.status = VideoJobStatus.FAILED.value
+            job.error_message = "Render completed but no output artifact found"
+
         self.db.commit()
 
-        logger.info("Started video production job %s → OpenMontage %s", job.id, result["project_id"])
-        return {"started": True, "job_id": str(job.id), "project_id": result["project_id"]}
+        logger.info("Video production job %s completed → %s", job.id, start_result.get("output_path"))
+        return {
+            "started": True,
+            "completed": job.status == VideoJobStatus.COMPLETED.value,
+            "job_id": str(job.id),
+            "project_id": result["project_id"],
+            "output_path": start_result.get("output_path", ""),
+            "duration_seconds": start_result.get("duration_seconds", 0),
+        }
 
     def approve_job(self, job_id: UUID) -> dict[str, Any]:
         """Approve a job that is awaiting approval."""
