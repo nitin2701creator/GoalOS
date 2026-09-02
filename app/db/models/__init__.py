@@ -14,6 +14,20 @@ from .skill import Skill
 from .social import SocialAccount, SocialMetric, SocialPost
 from .task import Task
 from .viral import ViralContentItem, ViralIdea
+from .meta_ads import (
+    ActionStatus,
+    ActionType,
+    AdsetStatus,
+    CampaignObjective,
+    ExecutionMode,
+    MetaAd,
+    MetaAdSet,
+    MetaAuditLog,
+    MetaCampaign,
+    MetaExecutionAction,
+    MetaPerformanceSnapshot,
+    RiskLevel,
+)
 from .video_production import VideoJobStatus, VideoProduction
 from .voice import CallDirection, VoiceCallRecord, VoiceCallStatus, VoiceCallEvent
 from .whatsapp import (
