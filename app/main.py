@@ -13,6 +13,10 @@ from app.api.router import api_router
 from app.api.v1.openai import build_health_payload
 from app.api.v1.openai import router as openai_router
 from app.config import GOALOS_VERSION
+from app.control_loop.resource_guardian_monitor import (
+    start_resource_guardian_monitor,
+    stop_resource_guardian_monitor,
+)
 from app.control_loop.scheduler_worker import (
     start_scheduler_worker,
     stop_scheduler_worker,
@@ -144,10 +148,17 @@ async def on_startup():
     # worker refuses duplicates and claims due runs atomically in the DB,
     # so restarts and multiple uvicorn workers stay safe).
     start_scheduler_worker()
+    # Start the Resource Guardian capacity monitor (lightweight background
+    # task that evaluates system capacity on a configurable interval).
+    try:
+        start_resource_guardian_monitor()
+    except Exception as exc:  # noqa: BLE001 - monitor must not block startup
+        logger.warning("resource guardian monitor failed to start: %s", exc)
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    await stop_resource_guardian_monitor()
     await stop_scheduler_worker()
 
 

@@ -22,6 +22,7 @@ from app.api.v1 import webhooks as webhooks_router
 from app.api.v1 import meta_ads as meta_router
 from app.api.v1 import video_production as video_router
 from app.api.v1 import whatsapp_api as whatsapp_router
+from app.api.v1 import resource_guardian as resource_guardian_router
 from app.api.v1 import workflows as workflows_router
 
 api_router = APIRouter()
@@ -64,3 +65,4 @@ api_router.include_router(communications_router.router, prefix="/v1/communicatio
 api_router.include_router(meta_router.router, prefix="/v1/meta", tags=["meta"])
 api_router.include_router(video_router.router, prefix="/v1/video", tags=["video"])
 api_router.include_router(whatsapp_router.router, prefix="/v1/whatsapp", tags=["whatsapp"])
+api_router.include_router(resource_guardian_router.router, prefix="/v1/resource-guardian", tags=["resource-guardian"])

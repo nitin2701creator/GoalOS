@@ -814,6 +814,17 @@ BUILTIN_CAPABILITIES.update(
             execution_capability=None,
             keywords=("system status", "resource monitor", "server health", "cpu usage", "ram usage"),
         ),
+        # --- Resource Guardian (native, production capacity monitoring) ---
+        "resource_guardian": _integration_definition(
+            name="resource_guardian",
+            description="Production capacity monitoring with state machine, hysteresis, and upgrade recommendations. Monitors CPU, RAM, swap, disk, load, containers, and service health.",
+            category="system",
+            provider="native",
+            implementation="system.resource_guardian",
+            permissions=(Permission.READ_WEBSITE,),
+            execution_capability=None,
+            keywords=("infrastructure health", "capacity", "upgrade required", "resource guardian", "vps health", "server capacity", "is upgrade needed", "capacity risk"),
+        ),
     }
 )
 
