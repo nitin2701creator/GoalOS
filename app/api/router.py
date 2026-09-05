@@ -19,6 +19,7 @@ from app.api.v1 import system as system_router
 from app.api.v1 import tasks as tasks_router
 from app.api.v1 import viral_ideas as viral_router
 from app.api.v1 import webhooks as webhooks_router
+from app.api.v1 import linkedin_skills as linkedin_skills_router
 from app.api.v1 import meta_ads as meta_router
 from app.api.v1 import video_production as video_router
 from app.api.v1 import whatsapp_api as whatsapp_router
@@ -62,6 +63,7 @@ api_router.include_router(credentials_router.router, prefix="/v1/credentials", t
 api_router.include_router(system_router.router, prefix="/v1/system", tags=["system"])
 api_router.include_router(memory_router.router, prefix="/v1/memory", tags=["memory"])
 api_router.include_router(communications_router.router, prefix="/v1/communications", tags=["communications"])
+api_router.include_router(linkedin_skills_router.router, prefix="/v1/linkedin", tags=["linkedin"])
 api_router.include_router(meta_router.router, prefix="/v1/meta", tags=["meta"])
 api_router.include_router(video_router.router, prefix="/v1/video", tags=["video"])
 api_router.include_router(whatsapp_router.router, prefix="/v1/whatsapp", tags=["whatsapp"])
