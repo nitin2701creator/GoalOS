@@ -262,23 +262,38 @@ def request_approval(request: ApprovalRequest):
 
 @router.post("/execution/execute")
 def execute_action(request: ExecutionRequest):
-    """Execute an approved action through Meta API."""
-    # In production, this would use the real MetaWriteAdapter
-    # For now, return a simulated result
+    """Create, approve, and execute a Meta Ads action.
+
+    Flow:
+    1. Create the action (with guardrail validation)
+    2. Auto-approve in SUPERVISED/AUTONOMOUS mode
+    3. Execute through MetaWriteAdapter if approved
+    4. Return the result
+
+    In SAFE mode the action stays as dry_run — no Meta API call is made.
+    """
     action = _engine.create_action(
         action_type=request.action_type,
         parameters=request.parameters,
         entity_type=request.entity_type,
         entity_meta_id=request.entity_meta_id,
     )
-    # Auto-approve for supervised/autonomous mode
+
+    # Auto-approve in non-SAFE modes
     if _engine.mode != ExecutionMode.SAFE:
         _engine.approve_action(action.id, approved_by="system")
+
+    # Execute through the Meta adapter if the action is approved
+    if action.status == "approved":
+        adapter = MetaWriteAdapter()
+        action = _engine.execute_action(action.id, meta_adapter=adapter)
 
     return {
         "action_id": str(action.id),
         "status": action.status,
-        "message": "Action created — requires approval in SAFE mode",
+        "action_type": action.action_type,
+        "execution_result": action.execution_result,
+        "error": action.error_message,
     }
 
 

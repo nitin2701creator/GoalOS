@@ -548,3 +548,186 @@ class TestMetaAdsAPI:
         assert response.status_code == 200
         data = response.json()
         assert "recommendations" in data
+
+    # ------------------------------------------------------------------
+    # 7. Execution wiring — prove API → ExecutionEngine → MetaWriteAdapter
+    # ------------------------------------------------------------------
+
+    def test_execute_safe_mode_returns_dry_run(self, api):
+        """In SAFE mode, /execution/execute creates a dry_run action (no Meta call)."""
+        response = api.post("/api/v1/meta/execution/execute", json={
+            "action_type": "create_campaign",
+            "parameters": {"name": "Safe Test", "objective": "SALES"},
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "dry_run"
+        assert data["execution_result"] is None
+
+    def test_execute_supervised_mode_calls_adapter(self, api, monkeypatch):
+        """In SUPERVISED mode, execute routes through MetaWriteAdapter."""
+        from app.services.meta_execution import ExecutionMode
+        from app.api.v1 import meta_ads as meta_module
+
+        # Switch engine to SUPERVISED for this test
+        original_mode = meta_module._engine.mode
+        meta_module._engine.mode = ExecutionMode.SUPERVISED
+        try:
+            # Mock MetaWriteAdapter.create_campaign to avoid real Meta API
+            call_log: list[str] = []
+
+            class FakeMetaWriteAdapter:
+                def __init__(self, **kwargs):
+                    pass
+
+                def create_campaign(self, params):
+                    call_log.append("create_campaign")
+                    return {"id": "act_fake_123/campaigns", "name": params["name"]}
+
+            monkeypatch.setattr(
+                "app.api.v1.meta_ads.MetaWriteAdapter", FakeMetaWriteAdapter,
+            )
+
+            response = api.post("/api/v1/meta/execution/execute", json={
+                "action_type": "create_campaign",
+                "parameters": {"name": "Wired Test", "objective": "SALES"},
+            })
+            assert response.status_code == 200
+            data = response.json()
+            assert "create_campaign" in call_log, "MetaWriteAdapter.create_campaign was not called"
+            assert data["status"] == "completed"
+            assert data["execution_result"] is not None
+        finally:
+            meta_module._engine.mode = original_mode
+
+    def test_execute_supervised_mode_adapter_error(self, api, monkeypatch):
+        """When the Meta adapter raises, the action is marked failed."""
+        from app.services.meta_execution import ExecutionMode
+        from app.api.v1 import meta_ads as meta_module
+        from app.integrations.exceptions import ConfigurationError
+
+        original_mode = meta_module._engine.mode
+        meta_module._engine.mode = ExecutionMode.SUPERVISED
+        try:
+            class FailingAdapter:
+                def __init__(self, **kwargs):
+                    pass
+
+                def create_campaign(self, params):
+                    raise ConfigurationError("Meta API error 190: Error validating access token")
+
+            monkeypatch.setattr(
+                "app.api.v1.meta_ads.MetaWriteAdapter", FailingAdapter,
+            )
+
+            response = api.post("/api/v1/meta/execution/execute", json={
+                "action_type": "create_campaign",
+                "parameters": {"name": "Fail Test", "objective": "SALES"},
+            })
+            assert response.status_code == 200
+            data = response.json()
+            assert data["status"] == "failed"
+            assert "Error validating access token" in data["error"]
+        finally:
+            meta_module._engine.mode = original_mode
+
+    def test_execute_creates_audit_record(self, api, monkeypatch):
+        """A completed execution can produce an audit record."""
+        from app.services.meta_execution import ExecutionMode
+        from app.api.v1 import meta_ads as meta_module
+
+        original_mode = meta_module._engine.mode
+        meta_module._engine.mode = ExecutionMode.SUPERVISED
+        try:
+            class FakeAdapter:
+                def __init__(self, **kwargs):
+                    pass
+
+                def create_adset(self, params):
+                    return {"id": "adset_123", "name": params["name"]}
+
+            monkeypatch.setattr("app.api.v1.meta_ads.MetaWriteAdapter", FakeAdapter)
+
+            # Execute
+            response = api.post("/api/v1/meta/execution/execute", json={
+                "action_type": "create_adset",
+                "parameters": {"name": "Audit Test", "campaign_id": "c1", "daily_budget": 20},
+            })
+            assert response.status_code == 200
+            data = response.json()
+            action_id = data["action_id"]
+
+            # Retrieve and verify audit record can be created
+            from uuid import UUID
+            from app.services.meta_execution import ExecutionEngine
+            engine = meta_module._engine
+            action = engine.get_action(UUID(action_id))
+            assert action is not None
+            assert action.status == "completed"
+
+            audit = engine.create_audit_record(action, actor="test-agent")
+            assert audit.action_type == "create_adset"
+            assert audit.actor == "test-agent"
+            assert audit.meta_response is not None
+        finally:
+            meta_module._engine.mode = original_mode
+
+    def test_status_endpoint_returns_execution_result(self, api, monkeypatch):
+        """GET /execution/status shows result after execution."""
+        from app.services.meta_execution import ExecutionMode
+        from app.api.v1 import meta_ads as meta_module
+
+        original_mode = meta_module._engine.mode
+        meta_module._engine.mode = ExecutionMode.SUPERVISED
+        try:
+            class FakeAdapter:
+                def __init__(self, **kwargs):
+                    pass
+
+                def pause(self, entity_id):
+                    return {"status": "PAUSED"}
+
+                def update_status(self, entity_id, status):
+                    return {"status": status}
+
+            monkeypatch.setattr("app.api.v1.meta_ads.MetaWriteAdapter", FakeAdapter)
+
+            # Execute a pause action
+            exec_resp = api.post("/api/v1/meta/execution/execute", json={
+                "action_type": "pause",
+                "parameters": {},
+                "entity_type": "ad",
+                "entity_meta_id": "ad_999",
+            })
+            action_id = exec_resp.json()["action_id"]
+
+            # Check status
+            status_resp = api.get(f"/api/v1/meta/execution/status/{action_id}")
+            assert status_resp.status_code == 200
+            data = status_resp.json()
+            assert data["status"] == "completed"
+            assert data["execution_result"] == {"status": "PAUSED"}
+        finally:
+            meta_module._engine.mode = original_mode
+
+    def test_execute_preserves_guardrails(self, api, monkeypatch):
+        """Guardrails still block execution even in SUPERVISED mode."""
+        from app.services.meta_execution import ExecutionMode, BudgetGuardrails
+        from app.api.v1 import meta_ads as meta_module
+
+        original_mode = meta_module._engine.mode
+        original_guardrails = meta_module._engine.guardrails
+        meta_module._engine.mode = ExecutionMode.SUPERVISED
+        meta_module._engine.guardrails = BudgetGuardrails(max_daily_budget=50)
+        try:
+            response = api.post("/api/v1/meta/execution/execute", json={
+                "action_type": "create_campaign",
+                "parameters": {"name": "Over Budget", "objective": "SALES", "daily_budget": 500},
+            })
+            assert response.status_code == 200
+            data = response.json()
+            assert data["status"] == "failed"
+            assert "exceeds" in data["error"]
+        finally:
+            meta_module._engine.mode = original_mode
+            meta_module._engine.guardrails = original_guardrails
