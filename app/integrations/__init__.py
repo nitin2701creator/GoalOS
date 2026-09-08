@@ -37,12 +37,14 @@ from app.integrations.twenty import TwentyConnector
 from app.integrations.web import WebConnector
 from app.integrations.x_twitter import TwitterConnector
 from app.integrations.website import WebsiteConnector
+from app.integrations.browser import BrowserOperator
 from app.integrations.woocommerce import WooCommerceConnector
 
 __all__ = [
     "SUPPORTED_INTEGRATIONS",
     "AuthenticationError",
     "BaseConnector",
+    "BrowserOperator",
     "CapabilityUnavailableError",
     "ConfigurationError",
     "ConnectionError",

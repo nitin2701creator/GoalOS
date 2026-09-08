@@ -11,3 +11,8 @@ google-genai>=1.0.0
 cryptography>=42.0.0
 PyJWT>=2.8.0
 psutil>=5.9.0
+playwright==1.45.0
+httpx==0.27.0 # Required by fastapi.testclient
+typing_extensions
+# trio is a library for async concurrency, typically not a top-level requirement for GoalOS, but can be added if specific async needs arise
+# asyncio is part of standard library, no need to specify version

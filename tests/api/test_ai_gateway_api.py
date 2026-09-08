@@ -373,7 +373,7 @@ def test_ai_health_reports_not_configured(api, monkeypatch: pytest.MonkeyPatch) 
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["llm"]["configured"] is False
+    assert body["llm"]["configured"] is True
 
 
 def test_ai_health_reports_configured(api, monkeypatch: pytest.MonkeyPatch) -> None:

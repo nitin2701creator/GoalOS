@@ -1,17 +1,4 @@
 """Base contract for GoalOS capability connectors.
-
-An :class:`IntegrationConnector` wraps one external system (web, website
-crawler, Gmail, WooCommerce, GA4, Meta Ads, scheduler). It extends the
-existing :class:`BaseConnector` lifecycle and adds:
-
-- stable ``capability`` names in the ``system.action`` convention
-  (``web.fetch``, ``email.send``, ...);
-- explicit permission requirements per capability, enforced before any
-  dispatch — dangerous actions never run without authorization;
-- configuration-aware health reporting (``Not Configured`` when required
-  environment configuration is absent — never a fake success);
-- a single ``execute(capability, params, permissions=...)`` entry point so
-  agents and skills can discover and invoke integrations uniformly.
 """
 
 from __future__ import annotations
@@ -23,6 +10,7 @@ from typing import Any
 
 from app.agents.permissions import Permission
 from app.integrations.base_connector import BaseConnector
+
 from app.integrations.connector_health import ConnectorHealth, ConnectorHealthStatus
 from app.integrations.exceptions import (
     CapabilityUnavailableError,
