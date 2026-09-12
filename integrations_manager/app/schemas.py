@@ -32,6 +32,7 @@ class IntegrationSummary(BaseModel):
     status: str
     last_connected_at: _dt.datetime | None = None
     error_message: str | None = None
+    is_enabled: bool = True
 
 class IntegrationDetail(IntegrationSummary):
     credential_fields: list[dict] = []
@@ -87,6 +88,11 @@ class OAuthTokenResponse(BaseModel):
     success: bool
     message: str
     access_token_preview: str = ""
+
+
+class TokenRefreshResponse(BaseModel):
+    success: bool
+    message: str
 
 
 # ── Audit ───────────────────────────────────────────────────────────────

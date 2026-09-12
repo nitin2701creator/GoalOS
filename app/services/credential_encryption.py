@@ -1,8 +1,11 @@
 """AES-256-GCM encryption for stored credentials.
 
 Uses a master key from the GOALOS_CREDENTIAL_ENCRYPTION_KEY environment
-variable. The key is loaded once at import time; the application refuses
-to start if it is missing (fail-fast, never silently store plaintext).
+variable. The key is resolved lazily and the application fails fast the
+first time it is needed if the key is missing — a credential can never be
+silently stored under an un-recoverable key. Development and tests can
+opt into a per-process ephemeral key by setting
+GOALOS_CREDENTIAL_EPHEMERAL_KEY=1.
 """
 
 from __future__ import annotations
@@ -15,6 +18,10 @@ import secrets
 
 _cached_key: bytes | None = None
 
+_ALLOW_EPHEMERAL_KEY = os.getenv("GOALOS_CREDENTIAL_EPHEMERAL_KEY", "0").lower() in (
+    "1", "true", "yes",
+)
+
 
 def _master_key() -> bytes:
     global _cached_key  # noqa: PLW0603
@@ -22,8 +29,14 @@ def _master_key() -> bytes:
         return _cached_key
     raw = os.environ.get("GOALOS_CREDENTIAL_ENCRYPTION_KEY", "")
     if not raw:
-        # In development, derive a per-process ephemeral key.
-        # Production MUST set GOALOS_CREDENTIAL_ENCRYPTION_KEY.
+        if not _ALLOW_EPHEMERAL_KEY:
+            raise RuntimeError(
+                "GOALOS_CREDENTIAL_ENCRYPTION_KEY is not set. Set a 64-char hex "
+                "key, e.g. `python -c 'import secrets; print(secrets.token_hex(32))'`, "
+                "or opt into the dev-only ephemeral key with "
+                "GOALOS_CREDENTIAL_EPHEMERAL_KEY=1."
+            )
+        # Development/tests only: per-process ephemeral key, never persisted.
         raw = hashlib.sha256(
             b"goalos-dev-credential-key-" + secrets.token_bytes(32)
         ).hexdigest()

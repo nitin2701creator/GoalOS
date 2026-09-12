@@ -1,26 +1,34 @@
-"""OAuth callback routes for all providers.
+"""OAuth callback and token-refresh routes for all providers.
 
 These routes handle the OAuth redirect callback, exchange code for tokens,
-and store encrypted tokens in the database.
+store encrypted tokens in the database, and refresh expired access tokens.
+
+The callback requires a ``state`` that was persisted by the ``connect``
+route; it is validated (provider match + not expired) and consumed exactly
+once before any token is exchanged.
 """
 from __future__ import annotations
 
 import datetime as _dt
-import json
-from base64 import b64encode
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 
-from integrations_manager.app.auth import get_current_user
-from integrations_manager.app.config import settings
-from integrations_manager.app.encryption import CredentialEncryption
-from integrations_manager.app.models import Integration, OAuthToken, ConnectionStatus
+from app.integrations.http_client import HttpError
+
+from integrations_manager.app.auth import get_current_user, require_csrf
+from integrations_manager.app.models import AuditLog, ConnectionStatus, Integration, OAuthToken, OAuthState
+from integrations_manager.app.oauth_flow import (
+    OAuthExchangeError,
+    OAuthNotConfiguredError,
+    apply_refreshed_tokens,
+    exchange_code,
+    refresh_access_token,
+)
 from integrations_manager.app.providers import PROVIDER_REGISTRY
+from integrations_manager.app.schemas import TokenRefreshResponse
+from integrations_manager.app.status import CONNECTED, EXPIRED
 
 router = APIRouter(prefix="/api/oauth", tags=["oauth"])
 
@@ -29,76 +37,58 @@ def _get_db(request: Request):
     return request.app.state.db
 
 
-def _get_encryption(request: Request) -> CredentialEncryption:
+def _get_encryption(request: Request):
     return request.app.state.encryption
 
 
-async def _exchange_code(slug: str, code: str, redirect_uri: str) -> dict:
-    """Exchange authorization code for tokens using provider-specific logic."""
-    if slug == "google_analytics":
-        data = urlencode({
-            "code": code,
-            "client_id": settings.GOOGLE_CLIENT_ID,
-            "client_secret": settings.GOOGLE_CLIENT_SECRET,
-            "redirect_uri": redirect_uri,
-            "grant_type": "authorization_code",
-        }).encode()
-        req = Request("https://oauth2.googleapis.com/token", data=data, method="POST")
-        req.add_header("Content-Type", "application/x-www-form-urlencoded")
-        with urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode())
+def _integration_or_404(db, provider: str) -> Integration:
+    integration = db.query(Integration).filter(Integration.slug == provider).first()
+    if not integration:
+        raise HTTPException(status_code=404, detail=f"Integration '{provider}' not found")
+    return integration
 
-    elif slug == "meta":
-        data = urlencode({
-            "code": code,
-            "client_id": settings.META_APP_ID,
-            "client_secret": settings.META_APP_SECRET,
-            "redirect_uri": redirect_uri,
-        }).encode()
-        req = Request(f"https://graph.facebook.com/v19.0/oauth/access_token?{data.decode()}", method="GET")
-        with urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode())
 
-    elif slug == "linkedin":
-        auth = b64encode(f"{settings.LINKEDIN_CLIENT_ID}:{settings.LINKEDIN_CLIENT_SECRET}".encode()).decode()
-        data = urlencode({
-            "code": code,
-            "grant_type": "authorization_code",
-            "redirect_uri": redirect_uri,
-        }).encode()
-        req = Request("https://www.linkedin.com/oauth/v2/accessToken", data=data, method="POST")
-        req.add_header("Authorization", f"Basic {auth}")
-        req.add_header("Content-Type", "application/x-www-form-urlencoded")
-        with urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode())
+def _status_row(db, integration: Integration) -> ConnectionStatus:
+    status = db.query(ConnectionStatus).filter(
+        ConnectionStatus.integration_id == integration.id
+    ).first()
+    if not status:
+        status = ConnectionStatus(integration_id=integration.id, status="not_configured")
+        db.add(status)
+    return status
 
-    elif slug == "reddit":
-        auth = b64encode(f"{settings.REDDIT_CLIENT_ID}:{settings.REDDIT_CLIENT_SECRET}".encode()).decode()
-        data = urlencode({
-            "code": code,
-            "grant_type": "authorization_code",
-            "redirect_uri": redirect_uri,
-        }).encode()
-        req = Request("https://www.reddit.com/api/v1/access_token", data=data, method="POST")
-        req.add_header("Authorization", f"Basic {auth}")
-        req.add_header("Content-Type", "application/x-www-form-urlencoded")
-        req.add_header("User-Agent", "GoalOS-Integrations-Manager/1.0")
-        with urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode())
 
-    elif slug == "twitter":
-        data = urlencode({
-            "code": code,
-            "grant_type": "authorization_code",
-            "redirect_uri": redirect_uri,
-            "code_verifier": "",  # PKCE verifier would be stored in state
-        }).encode()
-        req = Request("https://api.twitter.com/2/oauth2/token", data=data, method="POST")
-        req.add_header("Content-Type", "application/x-www-form-urlencoded")
-        with urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode())
+async def _require_pending_state(db, encryption, provider: str, state: str | None):
+    """Validate and consume the persisted OAuth state, returning its secrets.
 
-    raise HTTPException(status_code=400, detail=f"OAuth exchange not supported for {slug}")
+    The state must exist, belong to ``provider``, not be expired, and not
+    already be consumed (one-time use). The row is marked consumed before
+    the caller performs the token exchange so a replayed callback fails.
+    """
+    if not state:
+        raise HTTPException(status_code=400, detail="Missing OAuth state")
+
+    oauth_state = db.query(OAuthState).filter(OAuthState.state == state).first()
+    if oauth_state is None or oauth_state.consumed_at is not None:
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+    if oauth_state.expires_at < _dt.datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+    if oauth_state.provider != provider:
+        raise HTTPException(status_code=400, detail="State mismatch")
+
+    code_verifier = None
+    if oauth_state.encrypted_code_verifier:
+        try:
+            code_verifier = encryption.decrypt(oauth_state.encrypted_code_verifier)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+
+    redirect_uri = oauth_state.redirect_uri
+
+    # One-time use: consume before exchanging the code.
+    oauth_state.consumed_at = _dt.datetime.utcnow()
+
+    return code_verifier, redirect_uri
 
 
 @router.get("/{provider}/callback")
@@ -106,39 +96,29 @@ async def oauth_callback(
     provider: str,
     request: Request,
     code: str = Query(...),
-    state: str = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
 ):
-    """Handle OAuth callback from any provider."""
+    """Handle the OAuth redirect callback from any provider."""
     db = _get_db(request)
     encryption = _get_encryption(request)
 
-    # Validate state
-    if state:
-        oauth_states = getattr(request.app.state, "oauth_states", {})
-        state_info = oauth_states.pop(state, None)
-        if not state_info or state_info["expires"] < _dt.datetime.utcnow():
-            raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
-        if state_info["slug"] != provider:
-            raise HTTPException(status_code=400, detail="State mismatch")
+    if error:
+        raise HTTPException(status_code=400, detail="Authorization failed by provider")
 
-    # Find integration
-    integration = db.query(Integration).filter(Integration.slug == provider).first()
-    if not integration:
-        raise HTTPException(status_code=404, detail=f"Integration '{provider}' not found")
+    code_verifier, redirect_uri = await _require_pending_state(db, encryption, provider, state)
+    integration = _integration_or_404(db, provider)
 
-    # Build redirect URI
-    provider_mod = PROVIDER_REGISTRY.get(provider)
-    if not provider_mod:
-        raise HTTPException(status_code=404, detail=f"Provider '{provider}' not registered")
-    oauth_config = provider_mod().get_oauth_config()
-    redirect_uri = oauth_config.redirect_uri if oauth_config else ""
-
-    # Exchange code for tokens
+    # Exchange code for tokens using the exact redirect URI and PKCE
+    # verifier the authorization URL was built with.
     try:
-        token_data = await _exchange_code(provider, code, redirect_uri)
-    except HTTPError as e:
-        body = e.read().decode() if e.fp else str(e)
-        raise HTTPException(status_code=400, detail=f"Token exchange failed: {body}")
+        token_data = exchange_code(provider, code, redirect_uri, code_verifier)
+    except OAuthNotConfiguredError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except HttpError as exc:
+        raise HTTPException(status_code=400, detail="Token exchange failed")
+    except OAuthExchangeError as exc:
+        raise HTTPException(status_code=400, detail="Token exchange failed")
 
     access_token = token_data.get("access_token", "")
     refresh_token = token_data.get("refresh_token", "")
@@ -157,7 +137,11 @@ async def oauth_callback(
 
     enc_access = encryption.encrypt(access_token)
     enc_refresh = encryption.encrypt(refresh_token) if refresh_token else None
-    expires_at = _dt.datetime.utcnow() + _dt.timedelta(seconds=expires_in)
+    try:
+        expires_in_seconds = int(expires_in)
+    except (TypeError, ValueError):
+        expires_in_seconds = 3600
+    expires_at = _dt.datetime.utcnow() + _dt.timedelta(seconds=expires_in_seconds)
 
     if existing:
         existing.encrypted_access_token = enc_access
@@ -177,13 +161,8 @@ async def oauth_callback(
         ))
 
     # Update connection status
-    status = db.query(ConnectionStatus).filter(
-        ConnectionStatus.integration_id == integration.id
-    ).first()
-    if not status:
-        status = ConnectionStatus(integration_id=integration.id)
-        db.add(status)
-    status.status = "connected"
+    status = _status_row(db, integration)
+    status.status = CONNECTED
     status.last_connected_at = _dt.datetime.utcnow()
     status.error_message = None
 
@@ -198,3 +177,61 @@ async def oauth_callback(
         <script>setTimeout(() => window.close(), 3000);</script>
     </body></html>
     """)
+
+
+@router.post("/{provider}/refresh", response_model=TokenRefreshResponse)
+async def refresh_tokens_endpoint(
+    provider: str,
+    request: Request,
+    _user: Annotated[str, Depends(get_current_user)] = "",
+    _csrf: Annotated[None, Depends(require_csrf)] = None,
+):
+    """Refresh an expired access token from the stored refresh token.
+
+    On success the new tokens are persisted and the connection status is
+    set to ``connected``. On failure the status is set to ``expired`` so
+    the UI never reports a stale token as healthy.
+    """
+    db = _get_db(request)
+    encryption = _get_encryption(request)
+
+    integration = _integration_or_404(db, provider)
+    oauth = db.query(OAuthToken).filter(
+        OAuthToken.integration_id == integration.id,
+        OAuthToken.provider == provider,
+    ).first()
+    if not oauth or not oauth.encrypted_refresh_token:
+        raise HTTPException(status_code=409, detail="No refresh token stored — re-authorize")
+
+    refresh_token = encryption.decrypt(oauth.encrypted_refresh_token)
+    try:
+        token_data = refresh_access_token(provider, refresh_token)
+        apply_refreshed_tokens(oauth, encryption, token_data)
+    except OAuthNotConfiguredError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OAuthExchangeError:
+        status = _status_row(db, integration)
+        status.status = EXPIRED
+        status.error_message = "Access token refresh failed — reconnect required"
+        db.commit()
+        raise HTTPException(status_code=400, detail="Token refresh failed — reconnect required")
+    except HttpError:
+        status = _status_row(db, integration)
+        status.status = EXPIRED
+        status.error_message = "Access token refresh failed — reconnect required"
+        db.commit()
+        raise HTTPException(status_code=400, detail="Token refresh failed — reconnect required")
+
+    status = _status_row(db, integration)
+    status.status = CONNECTED
+    status.last_connected_at = _dt.datetime.utcnow()
+    status.error_message = None
+    db.add(AuditLog(
+        integration_id=integration.id,
+        action="refresh_token",
+        actor=_user,
+        details=f"Refreshed access token for {provider}",
+    ))
+    db.commit()
+
+    return TokenRefreshResponse(success=True, message="Access token refreshed")

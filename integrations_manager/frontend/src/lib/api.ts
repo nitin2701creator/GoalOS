@@ -13,6 +13,11 @@ export function setAuth(token: string, csrf: string) {
   csrfToken = csrf;
 }
 
+async function fetchFreshCSRFToken(): Promise<string> {
+  const res = await request<{ csrf_token: string }>('/auth/csrf');
+  return res.csrf_token;
+}
+
 export function clearAuth() {
   authToken = null;
   csrfToken = null;
@@ -22,10 +27,9 @@ export function isAuthenticated(): boolean {
   return authToken !== null;
 }
 
-async function request<T = any>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+  const method = (options.method || 'GET').toUpperCase();
+  const isStateChanging = ['POST', 'PUT', 'DELETE'].includes(method);
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> || {}),
@@ -34,27 +38,52 @@ async function request<T = any>(
   if (authToken) {
     headers['Authorization'] = `Bearer ${authToken}`;
   }
-  if (csrfToken && ['POST', 'PUT', 'DELETE'].includes(options.method || 'GET')) {
+
+  // Only include CSRF token for state-changing requests
+  if (isStateChanging && csrfToken) {
     headers['X-CSRF-Token'] = csrfToken;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-  });
+  let attempt = 0;
+  let lastError = null;
 
-  if (res.status === 401) {
-    clearAuth();
-    window.location.reload();
-    throw new Error('Unauthorized');
+  while (attempt < 2) {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers,
+    });
+
+    if (res.status === 401) {
+      clearAuth();
+      window.location.reload();
+      throw new Error('Unauthorized');
+    }
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ detail: res.statusText }));
+      lastError = new Error(body.detail || 'Request failed');
+
+      // Handle CSRF 403 error with retry logic
+      if (res.status === 403 && body.detail === 'Invalid or missing CSRF token') {
+        if (attempt === 0) {
+          // Fetch a fresh CSRF token and retry
+          const freshToken = await fetchFreshCSRFToken();
+          csrfToken = freshToken;
+          attempt++;
+          continue;
+        } else {
+          // Second attempt failed, throw the error
+          throw lastError;
+        }
+      } else {
+        throw lastError;
+      }
+    }
+
+    return res.json();
   }
 
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(body.detail || 'Request failed');
-  }
-
-  return res.json();
+  throw new Error('Unexpected error');
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────

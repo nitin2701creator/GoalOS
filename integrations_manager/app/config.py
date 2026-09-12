@@ -72,5 +72,9 @@ class Settings:
         "http://localhost:8001/api/oauth/reddit/callback",
     )
 
+    # ── X/Twitter OAuth (OAuth 2.0 PKCE) ────────────────────────────────
+    TWITTER_CLIENT_ID: str = os.getenv("TWITTER_CLIENT_ID", "")
+    TWITTER_CLIENT_SECRET: str = os.getenv("TWITTER_CLIENT_SECRET", "")
+
 
 settings = Settings()

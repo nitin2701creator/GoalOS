@@ -10,23 +10,29 @@ interface Props {
 const STATUS_COLORS: Record<string, string> = {
   not_configured: 'bg-gray-500',
   configured: 'bg-yellow-500',
+  auth_required: 'bg-blue-500',
   connected: 'bg-green-500',
+  expired: 'bg-orange-700',
   auth_failed: 'bg-red-500',
   unreachable: 'bg-orange-500',
   invalid_config: 'bg-amber-500',
   api_unavailable: 'bg-purple-500',
   error: 'bg-red-500',
+  disabled: 'bg-gray-400',
 }
 
 const STATUS_LABELS: Record<string, string> = {
   not_configured: 'Not Configured',
   configured: 'Configured',
+  auth_required: 'Authorization Required',
   connected: 'Connected',
+  expired: 'Reconnect Required',
   auth_failed: 'Authentication Failed',
   unreachable: 'Unreachable',
   invalid_config: 'Invalid Configuration',
   api_unavailable: 'API Unavailable',
   error: 'Error',
+  disabled: 'Disabled',
 }
 
 export default function Dashboard({ onLogout }: Props) {

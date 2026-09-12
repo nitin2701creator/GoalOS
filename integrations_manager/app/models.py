@@ -94,6 +94,31 @@ class OAuthToken(Base):
     integration = relationship("Integration", back_populates="oauth_tokens")
 
 
+# ── OAuth authorization state (mandatory, persisted, one-time) ──────────
+class OAuthState(Base):
+    """A single pending OAuth authorization flow.
+
+    ``state`` is the CSRF state placed in the authorization URL. It is
+    persisted in the database, validated and consumed exactly once by the
+    callback, and holds the exact ``redirect_uri`` used when the flow
+    started plus an encrypted PKCE ``code_verifier`` so the token exchange
+    completes with the same secret the authorization URL was built with.
+    """
+    __tablename__ = "oauth_states"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    state = Column(String(128), unique=True, nullable=False, index=True)
+    provider = Column(String(64), nullable=False, index=True)
+    redirect_uri = Column(String(512), nullable=False)
+    encrypted_code_verifier = Column(Text, nullable=True)  # AES-256-GCM for PKCE providers
+    expires_at = Column(DateTime, nullable=False)
+    consumed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=_dt.datetime.utcnow)
+
+    def __repr__(self) -> str:
+        return f"<OAuthState {self.state[:8]}… provider={self.provider!r}>"
+
+
 # ── Connection status ───────────────────────────────────────────────────
 class ConnectionStatus(Base):
     __tablename__ = "connection_status"

@@ -50,10 +50,19 @@ class OAuthConfig:
     token_url: str
     scopes: list[str]
     redirect_uri: str
-    
+    client_id: str = ""  # set by providers that build URLs directly
+
     def get_auth_url(self, state: str, redirect_uri: str) -> str:
-        """Construct the full OAuth authorization URL with state and redirect URI."""
-        return f"{self.auth_url}?response_type=code&client_id={redirect_uri.split('/')[2]}&redirect_uri={redirect_uri}&scope={' '.join(self.scopes)}&state={state}"
+        """Construct the full OAuth authorization URL with state and redirect URI.
+
+        Uses the configured ``client_id`` when provided. Falls back to the
+        legacy host-derived value only for providers that never set one.
+        """
+        client_id = self.client_id or redirect_uri.split('/')[2]
+        return (
+            f"{self.auth_url}?response_type=code&client_id={client_id}"
+            f"&redirect_uri={redirect_uri}&scope={' '.join(self.scopes)}&state={state}"
+        )
 
 
 class BaseProvider(abc.ABC):

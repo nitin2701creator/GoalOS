@@ -16,8 +16,18 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from app.integrations.http_client import HttpError
+
 from integrations_manager.app.auth import get_current_user, require_csrf
 from integrations_manager.app.encryption import CredentialEncryption
+from integrations_manager.app.oauth_flow import (
+    OAuthExchangeError,
+    OAuthNotConfiguredError,
+    apply_refreshed_tokens,
+    build_authorization_url,
+    refresh_access_token,
+    supports_refresh,
+)
 from integrations_manager.app.models import (
     AuditLog,
     ConnectionStatus,
@@ -27,6 +37,14 @@ from integrations_manager.app.models import (
 )
 from integrations_manager.app.providers import PROVIDER_REGISTRY
 from integrations_manager.app.providers.base import BaseProvider
+from integrations_manager.app.status import (
+    AUTH_REQUIRED,
+    CONFIGURED,
+    CONNECTED,
+    DISABLED,
+    EXPIRED,
+    NOT_CONFIGURED,
+)
 from integrations_manager.app.schemas import (
     AuditLogEntry,
     ConnectResponse,
@@ -90,6 +108,38 @@ def _log_audit(db, integration_id: int | None, action: str, actor: str, details:
     db.commit()
 
 
+def _effective_status(db, integ: Integration, status_row: ConnectionStatus | None) -> str:
+    """Derive the canonical connection state for an integration.
+
+    Layers token expiry and the disabled flag on top of the last stored
+    status so the API never reports an expired token as healthy.
+    """
+    if not integ.is_enabled:
+        return DISABLED
+
+    stored = status_row.status if status_row and status_row.status else NOT_CONFIGURED
+
+    if integ.auth_type == "oauth2":
+        oauth = db.query(OAuthToken).filter(
+            OAuthToken.integration_id == integ.id
+        ).first()
+        if oauth:
+            if oauth.expires_at and oauth.expires_at <= _dt.datetime.utcnow():
+                return EXPIRED
+            return stored if stored != NOT_CONFIGURED else CONFIGURED
+
+        has_creds = db.query(Credential).filter(
+            Credential.integration_id == integ.id
+        ).first() is not None
+        if has_creds:
+            return stored if stored != NOT_CONFIGURED else CONFIGURED
+        if stored in (NOT_CONFIGURED, AUTH_REQUIRED):
+            return AUTH_REQUIRED
+        return stored
+
+    return stored
+
+
 # ── List all integrations ───────────────────────────────────────────────
 
 @router.get("", response_model=list[IntegrationSummary])
@@ -98,7 +148,7 @@ async def list_integrations(
     _user: Annotated[str, Depends(get_current_user)] = "",
 ):
     db = _get_db(request)
-    integrations = db.query(Integration).filter(Integration.is_enabled == True).all()
+    integrations = db.query(Integration).order_by(Integration.id).all()
     result = []
     for integ in integrations:
         status = _get_or_create_status(db, integ.id)
@@ -109,9 +159,10 @@ async def list_integrations(
             description=integ.description,
             icon=integ.icon,
             auth_type=integ.auth_type,
-            status=status.status,
+            status=_effective_status(db, integ, status),
             last_connected_at=status.last_connected_at,
             error_message=status.error_message,
+            is_enabled=integ.is_enabled,
         ))
     return result
 
@@ -145,12 +196,13 @@ async def get_integration(
         description=integ.description,
         icon=integ.icon,
         auth_type=integ.auth_type,
-        status=status.status,
+        status=_effective_status(db, integ, status),
         last_connected_at=status.last_connected_at,
         error_message=status.error_message,
         credential_fields=provider.get_credential_fields(),
         has_credentials=has_creds,
         has_oauth=has_oauth,
+        is_enabled=integ.is_enabled,
     )
 
 
@@ -240,6 +292,73 @@ async def save_credentials(
 
 # ── Test connection ─────────────────────────────────────────────────────
 
+async def _handle_expired_token(
+    db,
+    integ: Integration,
+    oauth: OAuthToken,
+    decrypted: dict[str, str],
+    encryption: CredentialEncryption,
+    actor: str,
+) -> TestConnectionResponse:
+    """Attempt a refresh for an expired token, else report it as expired."""
+    slug = integ.slug
+    provider = _get_provider(slug)
+    status = _get_or_create_status(db, integ.id)
+
+    refresh_token = decrypted.get("refresh_token", "")
+    if refresh_token and supports_refresh(slug):
+        try:
+            token_data = refresh_access_token(slug, refresh_token)
+            new_access = apply_refreshed_tokens(oauth, encryption, token_data)
+        except (OAuthExchangeError, OAuthNotConfiguredError, HttpError):
+            status.status = EXPIRED
+            status.error_message = "Access token expired — reconnect required"
+            _log_audit(db, integ.id, "refresh_failed", actor, f"Refresh failed for {slug}")
+            db.commit()
+            return TestConnectionResponse(
+                success=False,
+                message="Access token expired — reconnect required",
+                status=EXPIRED,
+            )
+        decrypted["access_token"] = new_access
+        if token_data.get("refresh_token"):
+            decrypted["refresh_token"] = token_data["refresh_token"]
+        db.commit()
+
+        result = await provider.test_connection(decrypted)
+        status_text = (result.status or "").strip() or (
+            CONNECTED if result.success else "error"
+        )
+        status.last_tested_at = _dt.datetime.utcnow()
+        if result.success:
+            status.status = status_text
+            status.last_connected_at = _dt.datetime.utcnow()
+            status.error_message = None
+        else:
+            status.status = status_text
+            status.error_message = result.message
+        _log_audit(db, integ.id, "test_connection", actor,
+                   f"Test {'passed' if result.success else 'failed'} after refresh: {result.message}")
+        db.commit()
+        return TestConnectionResponse(
+            success=result.success,
+            message=result.message,
+            details=result.details,
+            status=status_text,
+        )
+
+    status.status = EXPIRED
+    status.error_message = "Access token expired — reconnect required"
+    _log_audit(db, integ.id, "test_connection", actor,
+               "Test failed: access token expired, no refresh available")
+    db.commit()
+    return TestConnectionResponse(
+        success=False,
+        message="Access token expired — reconnect required",
+        status=EXPIRED,
+    )
+
+
 @router.post("/{slug}/test", response_model=TestConnectionResponse)
 async def test_connection(
     slug: str,
@@ -261,7 +380,8 @@ async def test_connection(
         except Exception:
             pass
 
-    # Also include OAuth tokens
+    # Also include OAuth tokens — refreshing first when the stored token
+    # has expired so an expired token is never silently treated as healthy.
     oauth = db.query(OAuthToken).filter(OAuthToken.integration_id == integ.id).first()
     if oauth:
         try:
@@ -273,6 +393,11 @@ async def test_connection(
                 decrypted["refresh_token"] = encryption.decrypt(oauth.encrypted_refresh_token)
             except Exception:
                 pass
+
+        if oauth.expires_at and oauth.expires_at <= _dt.datetime.utcnow():
+            return await _handle_expired_token(
+                db, integ, oauth, decrypted, encryption, _user
+            )
 
     result = await provider.test_connection(decrypted)
 
@@ -319,30 +444,19 @@ async def connect_integration(
 
     oauth_config = provider.get_oauth_config()
     if oauth_config:
-        # Generate state for CSRF protection
-        import secrets
-        state = secrets.token_urlsafe(32)
-        # Store state temporarily (in production, use Redis)
-        request.app.state.oauth_states = getattr(request.app.state, "oauth_states", {})
-        request.app.state.oauth_states[state] = {
-            "slug": slug,
-            "expires": _dt.datetime.utcnow() + _dt.timedelta(minutes=10),
-        }
-
-        params = {
-            "client_id": _get_oauth_client_id(slug),
-            "redirect_uri": oauth_config.redirect_uri,
-            "response_type": "code",
-            "scope": " ".join(oauth_config.scopes),
-            "state": state,
-            "access_type": "offline",
-            "prompt": "consent",
-        }
-        if slug == "reddit":
-            params["duration"] = "permanent"
-
-        from urllib.parse import urlencode
-        redirect_url = f"{oauth_config.auth_url}?{urlencode(params)}"
+        extra_params = {"duration": "permanent"} if slug == "reddit" else None
+        try:
+            redirect_url = build_authorization_url(
+                slug=slug,
+                auth_url=oauth_config.auth_url,
+                redirect_uri=oauth_config.redirect_uri,
+                scopes=oauth_config.scopes,
+                db=db,
+                encryption=_get_encryption(request),
+                extra_params=extra_params,
+            )
+        except OAuthNotConfiguredError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         return ConnectResponse(
             success=True,
             message="Redirecting to OAuth authorization",
@@ -396,25 +510,12 @@ async def get_status(
     status = _get_or_create_status(db, integ.id)
     return {
         "slug": slug,
-        "status": status.status,
+        "status": _effective_status(db, integ, status),
         "last_connected_at": status.last_connected_at.isoformat() if status.last_connected_at else None,
         "last_tested_at": status.last_tested_at.isoformat() if status.last_tested_at else None,
         "error_message": status.error_message,
+        "is_enabled": integ.is_enabled,
     }
-
-
-# ── Helper: get OAuth client ID per provider ────────────────────────────
-
-def _get_oauth_client_id(slug: str) -> str:
-    from integrations_manager.app.config import settings
-    mapping = {
-        "google_analytics": settings.GOOGLE_CLIENT_ID,
-        "meta": settings.META_APP_ID,
-        "linkedin": settings.LINKEDIN_CLIENT_ID,
-        "reddit": settings.REDDIT_CLIENT_ID,
-        "twitter": "",  # X uses PKCE, client ID from developer portal
-    }
-    return mapping.get(slug, "")
 
 
 # ── Audit logs ──────────────────────────────────────────────────────────
