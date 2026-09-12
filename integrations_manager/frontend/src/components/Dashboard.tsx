@@ -11,6 +11,10 @@ const STATUS_COLORS: Record<string, string> = {
   not_configured: 'bg-gray-500',
   configured: 'bg-yellow-500',
   connected: 'bg-green-500',
+  auth_failed: 'bg-red-500',
+  unreachable: 'bg-orange-500',
+  invalid_config: 'bg-amber-500',
+  api_unavailable: 'bg-purple-500',
   error: 'bg-red-500',
 }
 
@@ -18,6 +22,10 @@ const STATUS_LABELS: Record<string, string> = {
   not_configured: 'Not Configured',
   configured: 'Configured',
   connected: 'Connected',
+  auth_failed: 'Authentication Failed',
+  unreachable: 'Unreachable',
+  invalid_config: 'Invalid Configuration',
+  api_unavailable: 'API Unavailable',
   error: 'Error',
 }
 

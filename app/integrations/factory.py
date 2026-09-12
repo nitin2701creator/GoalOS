@@ -22,6 +22,7 @@ from app.integrations.google_analytics import GoogleAnalyticsConnector
 from app.integrations.google_calendar import GoogleCalendarConnector
 from app.integrations.google_drive import GoogleDriveConnector
 from app.integrations.http_client import HttpClient
+from app.integrations.integration_connector import IntegrationConnector
 from app.integrations.linkedin import LinkedInConnector
 from app.integrations.meta_ads import MetaAdsConnector
 from app.integrations.meta_social import MetaSocialConnector
@@ -67,6 +68,38 @@ _CAPABILITY_INTEGRATION_ALIASES: dict[str, str] = {
     "analytics": "google_analytics",
     "meta": "meta_ads",
 }
+
+#: Standard connectors constructed as ``ConnectorClass(client=client)`` that
+#: should be registered automatically in every default composition root.
+#: Adding a new integration to this tuple (plus ``SUPPORTED_INTEGRATIONS``
+#: and ``INTEGRATION_TYPES``) is the entire wiring it needs — no other
+#: registration code is required. Registration is deterministic: the class
+#: is always the same, never discovered by scanning the filesystem or by
+#: importing arbitrary modules at runtime.
+AUTO_CLIENT_CONNECTORS: tuple[type[IntegrationConnector], ...] = (
+    GoogleAnalyticsConnector,
+    GoogleCalendarConnector,
+    GoogleDriveConnector,
+    MetaAdsConnector,
+    MetaSocialConnector,
+    N8NConnector,
+    RedditConnector,
+    TwentyConnector,
+    LinkedInConnector,
+    TwitterConnector,
+    WooCommerceConnector,
+)
+
+#: External capability adapters constructed with no arguments and registered
+#: automatically in every default composition root.
+AUTO_NOARG_CONNECTORS: tuple[type[IntegrationConnector], ...] = (
+    OpenWAConnector,
+    WacrmConnector,
+    CallingConnector,
+    MemoryConnector,
+    Crawl4AIConnector,
+    SearXNGConnector,
+)
 
 #: Registry name → functional integration type (web, email, calendar,
 #: storage, crm, ...). Used by the persisted integration registry so
@@ -132,38 +165,27 @@ def build_default_registry(
             search_provider = DuckDuckGoSearchProvider(client=client or HttpClient())
     registry.register(WebConnector(client=client or HttpClient(), search_provider=search_provider))
     registry.register(WebsiteConnector(web=WebConnector(client=client or HttpClient())))
-    registry.register(WooCommerceConnector(client=client or HttpClient()))
-    registry.register(
-        GoogleAnalyticsConnector(client=client or HttpClient())
-    )
-    registry.register(MetaAdsConnector(client=client or HttpClient()))
+
+    # Auto-registration: every standard connector created from a shared
+    # HttpClient, plus the no-argument external adapters.
+    for connector_cls in AUTO_CLIENT_CONNECTORS:
+        registry.register(connector_cls(client=client or HttpClient()))
+    for connector_cls in AUTO_NOARG_CONNECTORS:
+        registry.register(connector_cls())
+
+    # Connectors with explicit composition (shared services, DB access).
     registry.register(GmailProvider(service=_default_gmail_service(client)))
-    registry.register(GoogleCalendarConnector(client=client or HttpClient()))
-    registry.register(GoogleDriveConnector(client=client or HttpClient()))
     registry.register(SchedulerConnector(db=session))
-    registry.register(TwentyConnector(client=client or HttpClient()))
-    registry.register(LinkedInConnector(client=client or HttpClient()))
-    meta_social = MetaSocialConnector(client=client or HttpClient())
-    registry.register(meta_social)
-    twitter_connector = TwitterConnector(client=client or HttpClient())
-    registry.register(twitter_connector)
-    reddit_connector = RedditConnector(client=client or HttpClient())
-    registry.register(reddit_connector)
+
+    meta_social = registry.get_connector("meta_social")
+    twitter_connector = registry.get_connector("twitter")
+    reddit_connector = registry.get_connector("reddit")
     social = SocialConnector()
     social.register_provider("meta", meta_social)
-    social.register_provider("linkedin", LinkedInConnector(client=client or HttpClient()))
+    social.register_provider("linkedin", registry.get_connector("linkedin"))
     social.register_provider("x", twitter_connector)
     social.register_provider("reddit", reddit_connector)
     registry.register(social)
-    registry.register(N8NConnector(client=client or HttpClient()))
-
-    # External capability adapters (WhatsApp, Memory, Web/SEO, Search)
-    registry.register(OpenWAConnector())
-    registry.register(WacrmConnector())
-    registry.register(CallingConnector())
-    registry.register(MemoryConnector())
-    registry.register(Crawl4AIConnector())
-    registry.register(SearXNGConnector())
 
     return registry
 

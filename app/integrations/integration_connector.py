@@ -11,7 +11,12 @@ from typing import Any
 from app.agents.permissions import Permission
 from app.integrations.base_connector import BaseConnector
 
-from app.integrations.connector_health import ConnectorHealth, ConnectorHealthStatus
+from app.integrations.connector_health import (
+    ConnectionStatus,
+    ConnectionTestResult,
+    ConnectorHealth,
+    ConnectorHealthStatus,
+)
 from app.integrations.exceptions import (
     CapabilityUnavailableError,
     PermissionDeniedError,
@@ -168,6 +173,33 @@ class IntegrationConnector(BaseConnector):
     def health_check(self) -> ConnectorHealth:
         """Return configuration health without performing network calls."""
         return self.configuration_health()
+
+    # ------------------------------------------------------------------
+    # Live connection testing (auto-integration contract)
+    # ------------------------------------------------------------------
+    def connection_test(self) -> ConnectionTestResult:
+        """Run a live connection test and return a structured result.
+
+        The base implementation is intentionally conservative: a configured
+        connector that does not override this method reports that no live
+        test is implemented instead of fabricating ``connected``. Subclasses
+        that can reach a real endpoint MUST override this and only report
+        :attr:`ConnectionStatus.CONNECTED` after the real endpoint has
+        answered successfully. Failures are classified with the canonical
+        :class:`ConnectionStatus` vocabulary so callers can react uniformly.
+        """
+        status, message = self._configuration_status()
+        if status is not ConnectorHealthStatus.HEALTHY:
+            return ConnectionTestResult(
+                False,
+                ConnectionStatus.INVALID_CONFIG,
+                message or "integration is not configured",
+            )
+        return ConnectionTestResult(
+            False,
+            ConnectionStatus.ERROR,
+            f"live connection test not implemented for '{self.name}'",
+        )
 
     @staticmethod
     def _env(name: str) -> str | None:

@@ -84,3 +84,56 @@ def test_connector_loader_discovers_instantiates_and_initializes_connectors() ->
     assert set(loaded_connectors) == {"example"}
     assert loaded_connectors["example"].is_initialized is True
     assert loader.get_connector("example") is loaded_connectors["example"]
+
+
+def test_auto_registration_is_deterministic_and_curated() -> None:
+    """Auto-registration must be explicit, never dynamic or filesystem-scanned."""
+    import inspect
+    import types as _types
+
+    from app.integrations import base_connector
+    from app.integrations import integration_connector
+    from app.integrations.factory import (
+        AUTO_CLIENT_CONNECTORS,
+        AUTO_NOARG_CONNECTORS,
+    )
+
+    for cls_name in ("AUTO_CLIENT_CONNECTORS", "AUTO_NOARG_CONNECTORS"):
+        value = getattr(_factory(), cls_name)
+        assert isinstance(value, tuple)
+        assert len(value) > 0
+        for entry in value:
+            assert inspect.isclass(entry)
+            assert issubclass(entry, base_connector.BaseConnector)
+            assert entry.__module__.startswith("app.integrations")
+
+    # Client-buildable connectors honor the capability contract.
+    for entry in AUTO_CLIENT_CONNECTORS:
+        assert issubclass(entry, integration_connector.IntegrationConnector)
+
+    # Every auto-registered connector lands in the default registry.
+    from app.integrations.factory import build_default_registry
+    from app.integrations.http_client import HttpClient
+
+    registry = build_default_registry(session=None)
+    for cls in AUTO_CLIENT_CONNECTORS:
+        probe = cls(client=HttpClient())
+        registered = registry.get_connector(probe.name)
+        assert registered is not None, f"{probe.name} was not auto-registered"
+        assert type(registered) is cls, f"{probe.name} bound to the wrong class"
+    for cls in AUTO_NOARG_CONNECTORS:
+        probe = cls()
+        registered = registry.get_connector(probe.name)
+        assert registered is not None, f"{probe.name} was not auto-registered"
+        assert type(registered) is cls, f"{probe.name} bound to the wrong class"
+
+    # The curated tuples must not include dynamically-generated classes.
+    for entry in AUTO_CLIENT_CONNECTORS:
+        assert not isinstance(entry, _types.FunctionType)
+        assert not entry.__name__.startswith("_")
+
+
+def _factory():
+    from app.integrations import factory as factory_module
+
+    return factory_module

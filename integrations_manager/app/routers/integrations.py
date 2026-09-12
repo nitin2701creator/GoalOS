@@ -276,15 +276,21 @@ async def test_connection(
 
     result = await provider.test_connection(decrypted)
 
+    # Normalize the canonical status reported by the provider so every
+    # integration surfaces one of the six UI states.
+    status_text = (result.status or "").strip() or (
+        "connected" if result.success else "error"
+    )
+
     # Update status
     status = _get_or_create_status(db, integ.id)
     status.last_tested_at = _dt.datetime.utcnow()
     if result.success:
-        status.status = "connected"
+        status.status = status_text
         status.last_connected_at = _dt.datetime.utcnow()
         status.error_message = None
     else:
-        status.status = "error"
+        status.status = status_text
         status.error_message = result.message
 
     _log_audit(db, integ.id, "test_connection", _user, f"Test {'passed' if result.success else 'failed'}: {result.message}")
@@ -294,6 +300,7 @@ async def test_connection(
         success=result.success,
         message=result.message,
         details=result.details,
+        status=status_text,
     )
 
 

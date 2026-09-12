@@ -1,0 +1,1 @@
+"""GoalOS Integrations Manager package."""

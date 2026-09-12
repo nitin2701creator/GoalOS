@@ -24,7 +24,8 @@ from integrations_manager.app.providers.openmontage import OpenMontageProvider
 class TestProviderRegistry:
     def test_all_providers_registered(self):
         expected = {
-            "woocommerce", "google_analytics", "meta", "linkedin", "twitter", "reddit",
+            "woocommerce", "google_analytics", "google_calendar", "google_drive",
+            "meta", "linkedin", "twitter", "reddit",
             "openwa", "wacrm", "calling", "openmontage",
         }
         assert set(PROVIDER_REGISTRY.keys()) == expected
@@ -43,6 +44,8 @@ class TestProviderInfo:
     @pytest.mark.parametrize("slug,expected_name", [
         ("woocommerce", "WooCommerce"),
         ("google_analytics", "Google Analytics 4"),
+        ("google_calendar", "Google Calendar"),
+        ("google_drive", "Google Drive"),
         ("meta", "Meta / Facebook"),
         ("linkedin", "LinkedIn"),
         ("twitter", "X / Twitter"),
@@ -213,3 +216,218 @@ class TestProviderTestConnection:
     async def test_calling_no_oauth(self):
         provider = CallingProvider()
         assert provider.get_oauth_config() is None
+
+
+SYSTEM_STATUS_OK = {
+    "environment": {
+        "woocommerce_version": "9.1.0",
+        "wp_version": "6.7",
+        "site_url": "http://www.organigram.in",
+    }
+}
+
+
+class TestWooCommerceConnection:
+    PROVIDER_CREDS = {
+        "store_url": "http://www.organigram.in",
+        "consumer_key": "ck-test",
+        "consumer_secret": "cs-test",
+    }
+
+    @staticmethod
+    def _mocked_urlopen(*, body=None, status_error=None, connection_error=None):
+        """Patch the provider's urlopen and assert no secrets in the query string."""
+        import json as _json
+
+        from integrations_manager.app.providers import woocommerce as woo_module
+        from urllib.parse import urlsplit
+
+        calls = []
+
+        def fake_urlopen(request, timeout=None):
+            url = str(getattr(request, "full_url", request))
+            calls.append(url)
+            query = urlsplit(url).query
+            assert "consumer_key" not in query and "consumer_secret" not in query, (
+                "credentials must never be sent in the query string"
+            )
+            headers = dict(getattr(request, "headers", {}) or {})
+            assert headers.get("Authorization", "").startswith("Basic "), (
+                "credentials must be sent via the Authorization header"
+            )
+            if status_error is not None:
+                raise status_error
+            if connection_error is not None:
+                raise connection_error
+            if body is None:
+                raise AssertionError("no body configured for mock urlopen")
+
+            class _Resp:
+                def __exit__(self, *args):
+                    return False
+
+                def __enter__(self):
+                    return self
+
+                def read(self):
+                    return body if isinstance(body, bytes) else str(body).encode()
+
+            return _Resp()
+
+        woo_module.urlopen = fake_urlopen
+        return calls
+
+    @pytest.mark.asyncio
+    async def test_connected_reports_real_api_success(self):
+        import json as _json
+
+        calls = self._mocked_urlopen(body=_json.dumps(SYSTEM_STATUS_OK))
+
+        provider = WooCommerceProvider()
+        result = await provider.test_connection(self.PROVIDER_CREDS)
+
+        assert result.success is True
+        assert result.status == "connected"
+        assert result.details["wc_version"] == "9.1.0"
+        assert len(calls) == 1
+        assert calls[0] == "http://www.organigram.in/wp-json/wc/v3/system_status"
+
+    @pytest.mark.asyncio
+    async def test_auth_failure_is_distinct(self):
+        from urllib.error import HTTPError
+
+        self._mocked_urlopen(status_error=HTTPError("http://x", 401, "Unauthorized", {}, None))
+
+        provider = WooCommerceProvider()
+        result = await provider.test_connection(self.PROVIDER_CREDS)
+
+        assert result.success is False
+        assert result.status == "auth_failed"
+        assert "Consumer Key" in result.message
+
+    @pytest.mark.asyncio
+    async def test_credentials_sent_via_header_not_query_string(self):
+        import json as _json
+
+        self._mocked_urlopen(body=_json.dumps(SYSTEM_STATUS_OK))
+
+        provider = WooCommerceProvider()
+        await provider.test_connection(self.PROVIDER_CREDS)
+
+    @pytest.mark.asyncio
+    async def test_unreachable_classifies_dns_and_network_failures(self):
+        from urllib.error import URLError
+        from socket import gaierror
+
+        self._mocked_urlopen(connection_error=URLError(gaierror(-2, "Name or service not known")))
+
+        provider = WooCommerceProvider()
+        result = await provider.test_connection(self.PROVIDER_CREDS)
+
+        assert result.success is False
+        assert result.status == "unreachable"
+
+    @pytest.mark.asyncio
+    async def test_timeout_classifies_as_unreachable(self):
+        def timeout(request, timeout=None):
+            import socket
+            import time
+            raise TimeoutError("timed out")
+
+        from integrations_manager.app.providers import woocommerce as woo_module
+        woo_module.urlopen = timeout
+
+        provider = WooCommerceProvider()
+        result = await provider.test_connection(self.PROVIDER_CREDS)
+
+        assert result.success is False
+        assert result.status == "unreachable"
+
+    @pytest.mark.asyncio
+    async def test_not_a_woocommerce_store(self):
+        self._mocked_urlopen(body="<html><body>WordPress home page</body></html>")
+
+        provider = WooCommerceProvider()
+        result = await provider.test_connection(self.PROVIDER_CREDS)
+
+        assert result.success is False
+        assert result.status == "api_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_classifies_as_api_unavailable(self):
+        self._mocked_urlopen(body="this is not json")
+
+        provider = WooCommerceProvider()
+        result = await provider.test_connection(self.PROVIDER_CREDS)
+
+        assert result.success is False
+        assert result.status == "api_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_invalid_url_is_invalid_config(self):
+        provider = WooCommerceProvider()
+        result = await provider.test_connection({**self.PROVIDER_CREDS, "store_url": "ftp://not-valid"})
+        assert result.success is False
+        assert result.status == "invalid_config"
+
+    @pytest.mark.asyncio
+    async def test_embedded_credentials_rejected(self):
+        provider = WooCommerceProvider()
+        result = await provider.test_connection({**self.PROVIDER_CREDS, "store_url": "https://user:pass@example.com"})
+        assert result.success is False
+        assert result.status == "invalid_config"
+        assert "credentials" in result.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_www_and_apex_fallback_on_dns_failure(self):
+        import json as _json
+        from urllib.error import URLError
+        from socket import gaierror
+
+        from urllib.request import Request as _Request
+        from integrations_manager.app.providers import woocommerce as woo_module
+
+        original_open = woo_module.urlopen
+        calls = []
+
+        def fake_urlopen(request, timeout=None):
+            url = str(getattr(request, "full_url", request))
+            calls.append(url)
+            if "www.organigram.in" in url:
+                raise URLError(gaierror(-2, "Name or service not known"))
+
+            class _Resp:
+                def __exit__(self, *args):
+                    return False
+
+                def __enter__(self):
+                    return self
+
+                def read(self):
+                    return _json.dumps(SYSTEM_STATUS_OK).encode()
+
+            return _Resp()
+
+        woo_module.urlopen = fake_urlopen
+        try:
+            provider = WooCommerceProvider()
+            result = await provider.test_connection(self.PROVIDER_CREDS)
+        finally:
+            woo_module.urlopen = original_open
+
+        assert result.success is True
+        assert any("organigram.in" in c and "www." not in c for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_missing_creds_is_invalid_config(self):
+        provider = WooCommerceProvider()
+        result = await provider.test_connection({"store_url": "https://shop.example.com"})
+        assert result.success is False
+        assert result.status == "invalid_config"
+        assert "Missing" in result.message
+
+    def test_get_connection_state(self):
+        provider = WooCommerceProvider()
+        assert provider.get_connection_state({}) == "not_configured"
+        assert provider.get_connection_state({"store_url": "https://x.com"}) == "not_configured"
+        assert provider.get_connection_state(self.PROVIDER_CREDS) == "configured"

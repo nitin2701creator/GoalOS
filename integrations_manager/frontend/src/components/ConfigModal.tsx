@@ -149,9 +149,13 @@ export default function ConfigModal({ slug, onClose, onSaved }: Props) {
             <span className={`w-3 h-3 rounded-full ${
               detail.status === 'connected' ? 'bg-green-500' :
               detail.status === 'configured' ? 'bg-yellow-500' :
+              detail.status === 'auth_failed' ? 'bg-red-500' :
+              detail.status === 'unreachable' ? 'bg-orange-500' :
+              detail.status === 'invalid_config' ? 'bg-amber-500' :
+              detail.status === 'api_unavailable' ? 'bg-purple-500' :
               detail.status === 'error' ? 'bg-red-500' : 'bg-gray-400'
             }`}></span>
-            <span className="text-sm font-medium capitalize">{detail.status.replace('_', ' ')}</span>
+            <span className="text-sm font-medium capitalize">{detail.status.replace(/_/g, ' ')}</span>
             {detail.last_connected_at && (
               <span className="text-xs text-gray-400 ml-2">
                 Last connected: {new Date(detail.last_connected_at).toLocaleString()}

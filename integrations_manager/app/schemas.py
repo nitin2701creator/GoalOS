@@ -61,6 +61,7 @@ class TestConnectionResponse(BaseModel):
     success: bool
     message: str
     details: dict = {}
+    status: str = ""
 
 class ConnectResponse(BaseModel):
     success: bool

@@ -9,6 +9,8 @@ from integrations_manager.app.providers.openwa import OpenWAProvider
 from integrations_manager.app.providers.wacrm import WacrmProvider
 from integrations_manager.app.providers.calling import CallingProvider
 from integrations_manager.app.providers.openmontage import OpenMontageProvider
+from integrations_manager.app.providers.google_calendar import GoogleCalendarProvider
+from integrations_manager.app.providers.google_drive import GoogleDriveProvider
 
 PROVIDER_REGISTRY: dict[str, type[BaseProvider]] = {
     # Communication
@@ -21,6 +23,8 @@ PROVIDER_REGISTRY: dict[str, type[BaseProvider]] = {
     "woocommerce": WooCommerceProvider,
     # Analytics
     "google_analytics": GoogleAnalyticsProvider,
+    "google_calendar": GoogleCalendarProvider,
+    "google_drive": GoogleDriveProvider,
     # Social
     "meta": MetaProvider,
     "linkedin": LinkedInProvider,
@@ -37,6 +41,8 @@ __all__ = [
     "CallingProvider",
     "OpenMontageProvider",
     "GoogleAnalyticsProvider",
+    "GoogleCalendarProvider",
+    "GoogleDriveProvider",
     "LinkedInProvider",
     "MetaProvider",
     "OpenWAProvider",

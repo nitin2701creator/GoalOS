@@ -17,28 +17,43 @@ Honesty contract:
 - HTTP 429 maps to :class:`RateLimitError` (``RATE_LIMITED``).
 - Other failures and malformed responses raise structured errors.
 - Credentials are never logged and never included in execution output.
+- :meth:`WooCommerceConnector.connection_test` never reports ``connected``
+  unless the live ``system_status`` REST endpoint answered successfully
+  with a valid WooCommerce payload. Failures are classified with the
+  canonical :class:`ConnectionStatus` vocabulary (``auth_failed``,
+  ``unreachable``, ``invalid_config``, ``api_unavailable``, ``error``).
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import re
 from typing import Any, ClassVar
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from app.agents.permissions import Permission
+from app.integrations.connector_health import ConnectionStatus, ConnectionTestResult
 from app.integrations.exceptions import (
     AuthenticationError,
     CapabilityUnavailableError,
     ConnectorError,
     RateLimitError,
 )
-from app.integrations.http_client import HttpClient, HttpStatusError
+from app.integrations.http_client import (
+    HttpConnectionError,
+    HttpClient,
+    HttpResponse,
+    HttpResponseTooLargeError,
+    HttpStatusError,
+    HttpTimeoutError,
+)
 from app.integrations.integration_connector import IntegrationConnector
 
 _READ_CAPABILITIES = frozenset(
     {
         "woocommerce.health",
+        "woocommerce.connection_test",
         "woocommerce.products",
         "woocommerce.orders",
         "woocommerce.customers",
@@ -66,6 +81,65 @@ _LIST_PATHS: dict[str, str] = {
     "woocommerce.list_categories": "/products/categories",
 }
 
+_HTTP_ERROR_STATUSES = (401, 403)
+
+
+def normalize_store_url(url: str) -> str:
+    """Return a canonical origin for a user-supplied WooCommerce store URL.
+
+    Accepts ``http(s)://`` URLs with or without a scheme, trailing slashes,
+    ``www.`` prefixes, and mixed casing. Returns ``<scheme>://<host>`` at
+    the origin (lower-cased). Raises :class:`ValueError` for empty values,
+    unsupported schemes, credentials embedded in the URL, or missing hosts.
+    """
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("store URL is required")
+    value = url.strip()
+    if "://" not in value:
+        value = f"https://{value}"
+    parts = urlsplit(value)
+    scheme = parts.scheme.lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(f"store URL scheme must be http or https, got {parts.scheme!r}")
+    if parts.username or parts.password:
+        raise ValueError("store URL must not contain embedded credentials")
+    netloc = parts.netloc.lower().rsplit("@", 1)[-1]
+    if not netloc:
+        raise ValueError(f"store URL has no host: {url!r}")
+    return urlunsplit((scheme, netloc, "", "", ""))
+
+
+def store_connection_candidates(base_url: str) -> list[str]:
+    """Return the ordered base URLs to try when testing a store connection.
+
+    The first candidate is the store URL exactly as given (including any
+    sub-folder path). Subsequent candidates relax only host variations a
+    real store commonly uses: ``www`` vs apex and ``http`` vs ``https``.
+    They are attempted in order and later candidates are only consulted
+    when the earlier one is unreachable (DNS/network/timeout failures), so
+    a definitive HTTP response still short-circuits the probe.
+    """
+    parts = urlsplit(base_url)
+    netloc = parts.netloc.lower().rsplit("@", 1)[-1]
+    host, _, port_suffix = netloc.partition(":")
+    if port_suffix:
+        port_suffix = f":{port_suffix}"
+    apex = host[4:] if host.startswith("www.") else host
+    path = parts.path.rstrip("/")
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for scheme, hostname in (
+        (parts.scheme.lower(), host),
+        (parts.scheme.lower(), apex),
+        ("https", host),
+        ("https", apex),
+    ):
+        url = urlunsplit((scheme, f"{hostname}{port_suffix}", path, "", ""))
+        if url not in seen:
+            seen.add(url)
+            candidates.append(url)
+    return candidates
+
 
 class WooCommerceConnector(IntegrationConnector):
     """WooCommerce store connector for products, orders, and customers."""
@@ -83,6 +157,7 @@ class WooCommerceConnector(IntegrationConnector):
         )
         for capability in (
             "woocommerce.health",
+            "woocommerce.connection_test",
             "woocommerce.products",
             "woocommerce.orders",
             "woocommerce.customers",
@@ -165,6 +240,14 @@ class WooCommerceConnector(IntegrationConnector):
     def _dispatch(self, capability: str, params: dict[str, Any]) -> dict[str, Any]:
         if capability == "woocommerce.health":
             return self._health()
+        if capability == "woocommerce.connection_test":
+            result = self.connection_test(url=params.get("url"))
+            return {
+                "success": result.success,
+                "status": result.status.value,
+                "message": result.message,
+                "details": result.details or {},
+            }
         if capability in _LIST_PATHS:
             return self._list(_LIST_PATHS[capability], params)
         if capability == "woocommerce.get_product":
@@ -328,13 +411,156 @@ class WooCommerceConnector(IntegrationConnector):
     # Transport helpers
     # ------------------------------------------------------------------
     def _url(self, path: str) -> str:
-        return urljoin(f"{self.base_url}/wp-json/{self.api_version}/", path.lstrip("/"))
+        return self._api_url(self.base_url, self.api_version, path)
+
+    @staticmethod
+    def _api_url(base_url: str, api_version: str, path: str) -> str:
+        return urljoin(
+            f"{base_url.rstrip('/')}/wp-json/{api_version.strip('/')}/",
+            path.lstrip("/"),
+        )
 
     def _headers(self) -> dict[str, str]:
         token = base64.b64encode(
             f"{self.consumer_key}:{self.consumer_secret}".encode()
         ).decode()
         return {"Authorization": f"Basic {token}"}
+
+    # ------------------------------------------------------------------
+    # Live connection testing
+    # ------------------------------------------------------------------
+    def connection_test(self, *, url: str | None = None) -> ConnectionTestResult:
+        """Probe the live WooCommerce REST API and classify the outcome.
+
+        Never fabricates success: ``connected`` is only reported when a
+        real ``system_status`` request returns a valid WooCommerce JSON
+        payload. The optional ``url`` override lets callers validate an
+        arbitrary store base URL without mutating the connector config.
+
+        Failure classification (canonical :class:`ConnectionStatus`):
+
+        - ``invalid_config``: missing credentials/URL or an unparsable URL;
+        - ``auth_failed``: HTTP 401/403 from the store;
+        - ``unreachable``: DNS/network failure or timeout on every candidate;
+        - ``api_unavailable``: the store answered but does not expose a
+          working WooCommerce REST API (HTML, 404, non-JSON, 5xx);
+        - ``error``: unexpected local failure.
+        """
+        base = (url or self.base_url or "").strip()
+        missing: list[str] = []
+        if not base:
+            missing.append("store URL (WOOCOMMERCE_URL)")
+        if not self.consumer_key:
+            missing.append("consumer key")
+        if not self.consumer_secret:
+            missing.append("consumer secret")
+        if missing:
+            return ConnectionTestResult(
+                False,
+                ConnectionStatus.INVALID_CONFIG,
+                "missing configuration: " + ", ".join(missing),
+            )
+
+        try:
+            normalize_store_url(base)
+        except ValueError as exc:
+            return ConnectionTestResult(
+                False,
+                ConnectionStatus.INVALID_CONFIG,
+                str(exc),
+            )
+
+        candidates = store_connection_candidates(base)
+        last_network_error: str | None = None
+        for candidate in candidates:
+            target = self._api_url(candidate, self.api_version, "system_status")
+            try:
+                response = self.client.fetch(
+                    target, method="GET", headers=self._headers()
+                )
+            except HttpStatusError as exc:
+                return self._connection_result_from_status(int(exc.status), candidate)
+            except (HttpConnectionError, HttpTimeoutError, HttpResponseTooLargeError) as exc:
+                last_network_error = str(exc)
+                continue
+            return self._classify_connection_response(response, candidate)
+
+        reason = last_network_error or "unable to reach the store"
+        return ConnectionTestResult(False, ConnectionStatus.UNREACHABLE, reason)
+
+    def _connection_result_from_status(
+        self, status: int, candidate: str
+    ) -> ConnectionTestResult:
+        if status in _HTTP_ERROR_STATUSES:
+            return ConnectionTestResult(
+                False,
+                ConnectionStatus.AUTH_FAILED,
+                f"WooCommerce rejected credentials (HTTP {status}) at {candidate}",
+            )
+        return ConnectionTestResult(
+            False,
+            ConnectionStatus.API_UNAVAILABLE,
+            f"WooCommerce API responded HTTP {status} at {candidate}",
+        )
+
+    def _classify_connection_response(
+        self, response: HttpResponse, candidate: str
+    ) -> ConnectionTestResult:
+        status = int(getattr(response, "status", 200) or 200)
+        if status in _HTTP_ERROR_STATUSES:
+            return ConnectionTestResult(
+                False,
+                ConnectionStatus.AUTH_FAILED,
+                f"WooCommerce rejected credentials (HTTP {status}) at {candidate}",
+            )
+        if status >= 400:
+            return ConnectionTestResult(
+                False,
+                ConnectionStatus.API_UNAVAILABLE,
+                f"WooCommerce API responded HTTP {status} at {candidate}",
+            )
+        try:
+            payload = json.loads(response.text)
+        except (json.JSONDecodeError, TypeError):
+            content_type = (response.content_type or "").lower()
+            if "html" in content_type:
+                return ConnectionTestResult(
+                    False,
+                    ConnectionStatus.API_UNAVAILABLE,
+                    "the site answered with an HTML page — WooCommerce REST "
+                    f"API may not be enabled at {candidate}",
+                )
+            return ConnectionTestResult(
+                False,
+                ConnectionStatus.API_UNAVAILABLE,
+                f"response from {candidate} is not valid WooCommerce JSON",
+            )
+        if not isinstance(payload, dict):
+            return ConnectionTestResult(
+                False,
+                ConnectionStatus.API_UNAVAILABLE,
+                f"response from {candidate} is not a WooCommerce payload",
+            )
+        details: dict[str, str] = {
+            "store_url": candidate,
+            "api_version": self.api_version,
+        }
+        environment = payload.get("environment")
+        if isinstance(environment, dict):
+            for key, detail in (
+                ("woocommerce_version", "woocommerce_version"),
+                ("wp_version", "wordpress_version"),
+                ("site_url", "site_url"),
+            ):
+                value = environment.get(key)
+                if isinstance(value, str) and value:
+                    details[detail] = value
+        return ConnectionTestResult(
+            True,
+            ConnectionStatus.CONNECTED,
+            f"connected to WooCommerce REST API at {candidate}",
+            details,
+        )
 
     def _request(
         self,
